@@ -86,8 +86,13 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200))
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
-    # Path relative to the managed workspaces directory (never absolute input).
-    root_path: Mapped[str] = mapped_column(String(255))
+    # Where the project lives:
+    #   managed  -> ``root_path`` is a slug relative to the workspaces directory
+    #   external -> ``root_path`` is an absolute path chosen by the user
+    location: Mapped[str] = mapped_column(String(16), default="managed")
+    root_path: Mapped[str] = mapped_column(String(1024))
+    # Directory name (inside the project root) holding Solo project state.
+    metadata_dir: Mapped[str] = mapped_column(String(64), default=".solo")
     source: Mapped[str] = mapped_column(String(16), default="created")
     status: Mapped[str] = mapped_column(String(32), default="ready")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

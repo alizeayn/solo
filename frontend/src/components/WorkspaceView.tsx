@@ -19,7 +19,7 @@ export default function WorkspaceView({
   onSignedOut: () => void | Promise<void>
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [projectOpen, setProjectOpen] = useState(false)
+  const [projectDialog, setProjectDialog] = useState<'create' | 'open' | null>(null)
   const isNarrow = useMediaQuery('(max-width: 900px)')
   const { project } = useWorkspace()
 
@@ -28,7 +28,8 @@ export default function WorkspaceView({
       <Header
         username={username}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenProject={() => setProjectOpen(true)}
+        onNewProject={() => setProjectDialog('create')}
+        onOpenProject={() => setProjectDialog('open')}
         onSignedOut={onSignedOut}
       />
 
@@ -38,17 +39,26 @@ export default function WorkspaceView({
             <div className="empty__glyph">🗂</div>
             <div className="empty__title">No project selected</div>
             <div className="empty__text">
-              Create an empty workspace or upload a ZIP archive to begin. The
-              project directory becomes the working directory for the coding
-              agent.
+              <strong>Create Project</strong> makes a new folder with Solo
+              project state. <strong>Open Project</strong> adopts a folder you
+              already have — your files stay exactly where they are.
             </div>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setProjectOpen(true)}
-            >
-              Open a project
-            </button>
+            <div className="header__group">
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => setProjectDialog('create')}
+              >
+                Create Project
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setProjectDialog('open')}
+              >
+                Open Project
+              </button>
+            </div>
           </div>
         ) : isNarrow ? (
           <StackedLayout />
@@ -58,7 +68,12 @@ export default function WorkspaceView({
       </main>
 
       {settingsOpen && <SettingsView onClose={() => setSettingsOpen(false)} />}
-      {projectOpen && <ProjectDialog onClose={() => setProjectOpen(false)} />}
+      {projectDialog && (
+        <ProjectDialog
+          initialMode={projectDialog}
+          onClose={() => setProjectDialog(null)}
+        />
+      )}
       <Toasts />
     </div>
   )

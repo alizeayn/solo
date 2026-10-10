@@ -1,4 +1,4 @@
-# Voice-First AI Workspace — single-service deployment.
+# Solo — single-service deployment.
 #
 #   docker compose up -d --build
 #   docker compose logs -f
@@ -11,8 +11,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: solo-workspace:local
-    container_name: solo-workspace
+    image: solo:local
+    container_name: solo
     restart: unless-stopped
 
     ports:

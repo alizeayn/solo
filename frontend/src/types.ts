@@ -91,9 +91,104 @@ export interface Project {
   slug: string
   source: string
   status: string
+  /** `managed` = created by Solo; `external` = an existing directory opened in place. */
+  location: 'managed' | 'external'
+  /** Absolute path of the project root on the machine running Solo. */
+  root: string | null
+  /** Directory name holding Solo state inside the project root (e.g. `.solo`). */
+  metadata_dir: string
+  is_managed: boolean
   created_at: string
   updated_at: string
   file_count: number
+}
+
+/** One node of the structured project state tree. */
+export interface TreeNode {
+  id: string
+  name: string
+  kind: 'project' | 'group' | 'directory' | 'file' | 'task' | 'memory' | 'session'
+  children?: TreeNode[]
+  path?: string
+  size?: number | null
+  ext?: string | null
+  status?: string
+  task_type?: string
+  memory_kind?: string
+  messages?: number
+  ref?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ProjectTree {
+  version: number
+  generated_at: string
+  truncated: boolean
+  project: Record<string, unknown>
+  root: TreeNode
+}
+
+export interface MemoryEntry {
+  id: string
+  kind: string
+  text: string
+  tags: string[]
+  source: string
+  task_id: string | null
+  created_at: string | null
+}
+
+export interface MemoryCreate {
+  text: string
+  kind?: string
+  tags?: string[]
+}
+
+export interface ProjectConfig {
+  version?: number
+  tree?: { max_depth?: number | null; max_entries?: number | null; exclude?: string[] }
+  memory?: { max_entries?: number; auto_capture?: boolean }
+  sessions?: { max_sessions?: number }
+  state?: { auto_refresh?: boolean }
+  agent?: {
+    backend?: string | null
+    provider?: string | null
+    model?: string | null
+  }
+}
+
+export interface ProjectSummary {
+  project_id: string
+  name: string
+  location: 'managed' | 'external'
+  root: string
+  metadata_dir: string
+  metadata_exists: boolean
+  file_count: number
+  directory_count: number
+  task_count: number
+  session_count: number
+  memory_count: number
+  task_status_counts: Record<string, number>
+  tree_generated_at: string | null
+  config: ProjectConfig
+}
+
+export interface FsEntry {
+  name: string
+  path: string
+  hidden: boolean
+  /** True when the directory already contains Solo project metadata. */
+  is_project: boolean
+}
+
+export interface FsListing {
+  path: string
+  parent: string | null
+  roots: string[]
+  entries: FsEntry[]
+  truncated: boolean
 }
 
 export interface TaskFile {

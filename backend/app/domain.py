@@ -91,7 +91,26 @@ class MessageRole(str, Enum):
 
 class ProjectSource(str, Enum):
     CREATED = "created"
-    UPLOADED = "uploaded"
+    OPENED = "opened"
+    IMPORTED = "imported"
+
+
+class ProjectLocation(str, Enum):
+    """Where a project's files live."""
+
+    #: Created by Solo inside the application-managed workspaces directory.
+    MANAGED = "managed"
+    #: An existing directory on disk, opened in place and never copied.
+    EXTERNAL = "external"
+
+
+class MemoryKind(str, Enum):
+    """Category of a project memory entry."""
+
+    NOTE = "note"
+    DECISION = "decision"
+    FACT = "fact"
+    TODO = "todo"
 
 
 #: Settings keys recognised by the application (grouped for the UI).

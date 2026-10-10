@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Conversation, Message
@@ -32,6 +32,23 @@ class ConversationRepository:
         self.session.add(conversation)
         await self.session.flush()
         return conversation
+
+    async def list_for_project(self, project_id: str) -> list[Conversation]:
+        """All conversations for a project, newest first."""
+        result = await self.session.execute(
+            select(Conversation)
+            .where(Conversation.project_id == project_id)
+            .order_by(Conversation.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def message_count(self, conversation_id: str) -> int:
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+        )
+        return int(result.scalar_one())
 
     async def add_message(
         self,

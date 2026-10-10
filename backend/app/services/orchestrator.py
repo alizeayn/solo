@@ -34,7 +34,8 @@ from ..schemas import EventOut, MessageOut, TaskOut
 from .context import build_snapshot, offline_answer
 from .event_bus import EventBus
 from .intent import IntentRouter
-from .project_service import resolve_project_root
+from .project_paths import resolve_project_root
+from .project_store import ProjectStoreService
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,14 @@ class OrchestratorService:
         adapter: CodingAgentAdapter,
         settings: Settings,
         router: IntentRouter | None = None,
+        store: ProjectStoreService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._bus = bus
         self._adapter = adapter
         self._settings = settings
         self._router = router or IntentRouter()
+        self._store = store
         self._runners: dict[str, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------------ #
@@ -307,6 +310,9 @@ class OrchestratorService:
             message=reply[:240],
             data={"conversation_id": conversation_id},
         )
+        await self._sync_project_store(
+            project_id, conversation_id=conversation_id
+        )
         return {"intent": intent.value, "message": message, "task_id": task_id}
 
     async def _answer_question(
@@ -340,6 +346,7 @@ class OrchestratorService:
             message="Answered the question from the current project snapshot.",
             data={"task_type": TaskType.QUESTION.value},
         )
+        await self._sync_project_store(project_id, task_id=task_id, refresh_tree=True)
         return answer, task_id
 
     # ------------------------------------------------------------------ #
@@ -365,6 +372,7 @@ class OrchestratorService:
             root.mkdir(parents=True, exist_ok=True)
 
             await self._set_status(task_id, project_id, TaskStatus.RUNNING)
+            await self._sync_project_store(project_id, task_id=task_id, refresh_tree=True)
             result = await self._adapter.run(
                 task_id=task_id,
                 prompt=instruction,
@@ -446,6 +454,38 @@ class OrchestratorService:
     # ------------------------------------------------------------------ #
     # Persistence & broadcast helpers
     # ------------------------------------------------------------------ #
+    async def _sync_project_store(
+        self,
+        project_id: str | None,
+        *,
+        task_id: str | None = None,
+        conversation_id: str | None = None,
+        refresh_tree: bool = False,
+    ) -> None:
+        """Mirror live state into the project's ``.solo`` store.
+
+        Best-effort by design: a project directory that has become read-only
+        must never break task execution, so every failure is logged and
+        swallowed.
+        """
+        if self._store is None or project_id is None:
+            return
+        try:
+            async with self._session_factory() as session:
+                project = await ProjectRepository(session).get(project_id)
+            if project is None:
+                return
+            if task_id is not None:
+                await self._store.record_task(project, task_id)
+            if conversation_id is not None:
+                await self._store.record_session(project, conversation_id)
+            if refresh_tree:
+                await self._store.refresh(project)
+        except Exception:  # noqa: BLE001 - the store never breaks a task
+            logger.warning(
+                "project store sync failed for project %s", project_id, exc_info=True
+            )
+
     async def _emit(
         self,
         *,
@@ -497,6 +537,14 @@ class OrchestratorService:
             )
             await session.commit()
             payload = TaskOut.model_validate(task).model_dump(mode="json")
+
+        if status in TERMINAL_STATUSES:
+            # Write the finished task into the project store *before* notifying
+            # any client, so a UI that shows "completed" can always read the
+            # record from disk.
+            await self._sync_project_store(
+                project_id, task_id=task_id, refresh_tree=True
+            )
 
         await self._bus.publish({"channel": "task", "payload": payload})
         await self._emit(

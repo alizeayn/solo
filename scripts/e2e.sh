@@ -5,8 +5,9 @@
 # Starts the backend on a throwaway port with a temporary data directory and
 # the built frontend, then exercises the full critical path:
 #
-#   health -> login -> project -> question -> coding task -> live events ->
-#   follow-up/steer -> terminal status -> SPA is served
+#   health -> login -> create project -> open project in place -> project
+#   state store (tree/memory/config) -> question -> coding task -> live events
+#   -> follow-up/steer -> terminal status -> SPA is served
 #
 # Usage: ./scripts/e2e.sh
 # Exit code 0 means every check passed.
@@ -17,6 +18,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$ROOT_DIR/venv"
 PORT="${E2E_PORT:-8099}"
 DATA_DIR="$(mktemp -d)"
+# A separate scratch area: the Solo data directory is deliberately blocked as a
+# project root, so projects must live outside it.
+WORK_DIR="$(mktemp -d)"
 BASE="http://127.0.0.1:${PORT}"
 COOKIES="${DATA_DIR}/cookies.txt"
 SERVER_LOG="${DATA_DIR}/server.log"
@@ -36,7 +40,7 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
-  rm -rf "$DATA_DIR"
+  rm -rf "$DATA_DIR" "$WORK_DIR"
 }
 trap cleanup EXIT
 
@@ -107,6 +111,77 @@ PROJECT="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/projects" \
   -H 'Content-Type: application/json' -d '{"name":"e2e-demo"}')"
 PROJECT_ID="$(echo "$PROJECT" | json "['id']")"
 [[ -n "$PROJECT_ID" ]] && pass "project created (${PROJECT_ID:0:8}…)" || fail "project creation failed"
+[[ "$(echo "$PROJECT" | json "['location']")" == "managed" ]] && pass "created inside the managed workspaces folder" || fail "unexpected location"
+[[ "$(echo "$PROJECT" | json "['root']")" == "$DATA_DIR/workspaces/e2e-demo" ]] && pass "project root reported as an absolute path" || fail "unexpected root: $(echo "$PROJECT" | json "['root']")"
+
+# --------------------------------------------------------------------------- #
+step "Create Project at a folder of my choosing"
+CUSTOM_PARENT="${WORK_DIR}/custom-parent"
+mkdir -p "$CUSTOM_PARENT"
+CUSTOM="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/projects" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Custom Spot\",\"parent\":\"${CUSTOM_PARENT}\"}")"
+[[ "$(echo "$CUSTOM" | json "['location']")" == "external" ]] && pass "external location recorded" || fail "expected an external project"
+[[ -f "${CUSTOM_PARENT}/custom-spot/.solo/project.json" ]] && pass "metadata store created in the chosen folder" || fail "no .solo store created"
+
+# --------------------------------------------------------------------------- #
+step "Open Project adopts an existing folder in place"
+EXTERNAL_REPO="${WORK_DIR}/external-repo"
+mkdir -p "${EXTERNAL_REPO}/src"
+printf 'print("hello")\n' >"${EXTERNAL_REPO}/src/main.py"
+printf '# existing\n' >"${EXTERNAL_REPO}/README.md"
+BEFORE_HASH="$(find "$EXTERNAL_REPO" -type f -exec md5sum {} \; | sort | md5sum)"
+
+OPENED="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/projects/open" \
+  -H 'Content-Type: application/json' \
+  -d "{\"path\":\"${EXTERNAL_REPO}\",\"name\":\"Existing Repo\"}")"
+OPENED_ID="$(echo "$OPENED" | json "['id']")"
+[[ "$(echo "$OPENED" | json "['location']")" == "external" ]] && pass "opened as an external project" || fail "expected external location"
+[[ "$(echo "$OPENED" | json "['root']")" == "$EXTERNAL_REPO" ]] && pass "reads the directory at its existing path" || fail "unexpected root"
+[[ -f "${EXTERNAL_REPO}/src/main.py" ]] && pass "user's files left untouched" || fail "project files disappeared"
+[[ -f "${EXTERNAL_REPO}/.solo/project.json" ]] && pass "project state store added in place" || fail "no metadata store"
+[[ -f "${EXTERNAL_REPO}/.solo/.gitignore" ]] && pass "metadata .gitignore keeps state out of the repo" || fail "no metadata gitignore"
+
+step "Opening the same folder again is idempotent"
+AGAIN="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/projects/open" \
+  -H 'Content-Type: application/json' -d "{\"path\":\"${EXTERNAL_REPO}\"}")"
+[[ "$(echo "$AGAIN" | json "['id']")" == "$OPENED_ID" ]] && pass "no duplicate project created" || fail "duplicate project"
+
+step "Opening a disallowed location is refused"
+if [[ -d /etc ]]; then
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" -X POST "${BASE}/api/projects/open" \
+    -H 'Content-Type: application/json' -d '{"path":"/etc"}')"
+  [[ "$CODE" == "400" ]] && pass "blocked system directory rejected (400)" || fail "expected 400, got $CODE"
+fi
+
+step "Filesystem browser lists directories only"
+BROWSE="$(curl -fsS -b "$COOKIES" "${BASE}/api/fs/list?path=${WORK_DIR}")"
+echo "$BROWSE" | grep -q '"path"' && pass "browse endpoint responds" || fail "browse endpoint failed"
+echo "$BROWSE" | grep -q '"is_project"' && pass "directories are flagged when they already hold Solo state" || fail "missing is_project flag"
+
+# --------------------------------------------------------------------------- #
+step "Project state store: tree, memory and configuration"
+TREE="$(curl -fsS -b "$COOKIES" "${BASE}/api/projects/${OPENED_ID}/tree?refresh=true")"
+for group in group:files group:tasks group:memory group:sessions; do
+  echo "$TREE" | grep -q "$group" && pass "state tree contains ${group}" || fail "missing ${group}"
+done
+echo "$TREE" | grep -q 'main.py' && pass "file tree lists real project files" || fail "file tree is empty"
+
+MAIN_STATE="${EXTERNAL_REPO}/.solo/state/tree.json"
+[[ -f "$MAIN_STATE" ]] && pass "state tree persisted to .solo/state/tree.json" || fail "no state tree file"
+
+MEMORY="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/projects/${OPENED_ID}/memory" \
+  -H 'Content-Type: application/json' -d '{"text":"Uses SQLite","kind":"decision","tags":["db"]}')"
+[[ "$(echo "$MEMORY" | json "['kind']")" == "decision" ]] && pass "memory entry recorded" || fail "memory entry failed"
+[[ -f "${EXTERNAL_REPO}/.solo/memory/index.json" ]] && pass "memory persisted to .solo/memory" || fail "no memory index"
+
+curl -fsS -b "$COOKIES" -X PUT "${BASE}/api/projects/${OPENED_ID}/config" \
+  -H 'Content-Type: application/json' -d '{"memory":{"auto_capture":false}}' >/dev/null
+CONFIG="$(curl -fsS -b "$COOKIES" "${BASE}/api/projects/${OPENED_ID}/config")"
+[[ "$(echo "$CONFIG" | json "['memory']['auto_capture']")" == "False" ]] && pass "per-project configuration updated" || fail "config update failed"
+
+SUMMARY="$(curl -fsS -b "$COOKIES" "${BASE}/api/projects/${OPENED_ID}/summary")"
+[[ "$(echo "$SUMMARY" | json "['metadata_exists']")" == "True" ]] && pass "summary reports an initialised store" || fail "summary wrong"
 
 step "Zip-slip upload is rejected"
 python3 - "$DATA_DIR/evil.zip" <<'PY'
@@ -152,7 +227,6 @@ DETAIL="$(curl -fsS -b "$COOKIES" "${BASE}/api/tasks/${TASK_ID}")"
 
 # --------------------------------------------------------------------------- #
 step "Follow-up steering while a task is running"
-sleep 0.01
 STEER_TASK="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/tasks" \
   -H 'Content-Type: application/json' \
   -d "{\"project_id\":\"${PROJECT_ID}\",\"instruction\":\"second task\"}")"
@@ -170,6 +244,15 @@ step "Single-page app is served from the same origin"
 INDEX="$(curl -fsS "${BASE}/")"
 echo "$INDEX" | grep -q 'id="root"' && pass "index.html served at /" || fail "SPA not served at /"
 curl -fsS -o /dev/null "${BASE}/api/docs" && pass "OpenAPI docs available at /api/docs" || fail "docs unavailable"
+
+# --------------------------------------------------------------------------- #
+step "Removing an opened project leaves the user's files untouched"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" -X DELETE "${BASE}/api/projects/${OPENED_ID}")"
+[[ "$CODE" == "204" ]] && pass "project unregistered (204)" || fail "expected 204, got $CODE"
+[[ -f "${EXTERNAL_REPO}/src/main.py" ]] && pass "user's source file still present" || fail "user files were deleted"
+[[ -f "${EXTERNAL_REPO}/.solo/project.json" ]] && pass "project state preserved for a future re-open" || fail "state lost"
+AFTER_HASH="$(find "$EXTERNAL_REPO" -type f -not -path '*/.solo/*' -exec md5sum {} \; | sort | md5sum)"
+[[ "$BEFORE_HASH" == "$AFTER_HASH" ]] && pass "file contents byte-for-byte unchanged" || fail "file contents changed"
 
 # --------------------------------------------------------------------------- #
 step "Task state is persisted in SQLite"

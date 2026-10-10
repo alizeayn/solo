@@ -1,3 +1,3 @@
-"""Voice-First AI Workspace — backend application package."""
+"""Solo — backend application package."""
 
 __version__ = "0.1.0"

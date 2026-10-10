@@ -23,7 +23,7 @@ describe('LoginView', () => {
 
   it('renders the sign-in form', () => {
     render(<LoginView onComplete={() => undefined} />)
-    expect(screen.getByRole('heading', { name: /voice-first ai workspace/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^solo$/i })).toBeInTheDocument()
     expect(screen.getByLabelText('Username')).toHaveValue('admin')
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
   })

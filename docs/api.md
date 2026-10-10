@@ -107,13 +107,24 @@ that never contains the secret.
 
 ## Projects
 
+A project is a directory on disk plus a `.solo/` state store inside it. See
+[projects.md](projects.md) for the full model.
+
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/projects` | Includes a bounded `file_count` per project |
-| `POST` | `/api/projects` | `{name}`; slug is derived and de-duplicated |
+| `POST` | `/api/projects` | `{name, parent?}` — create; omit `parent` for the managed folder |
+| `POST` | `/api/projects/open` | `{path, name?}` — adopt an existing directory in place |
 | `POST` | `/api/projects/upload` | `multipart/form-data`: `file` (`.zip`), optional `name` |
 | `GET` | `/api/projects/{id}` | `404` if unknown |
-| `DELETE` | `/api/projects/{id}` | `204`; removes the record and its directory |
+| `DELETE` | `/api/projects/{id}?remove_files=` | `204`. Defaults: `true` for managed, `false` for opened in place |
+| `GET` | `/api/projects/{id}/summary` | Counts, paths and the effective configuration |
+| `GET` | `/api/projects/{id}/tree?refresh=` | The structured project state tree |
+| `GET` | `/api/projects/{id}/config` | Per-project configuration |
+| `PUT` | `/api/projects/{id}/config` | Deep-merged partial update |
+| `GET` | `/api/projects/{id}/memory?limit=` | Memory entries, newest first |
+| `POST` | `/api/projects/{id}/memory` | `{text, kind?, tags?}` |
+| `DELETE` | `/api/projects/{id}/memory/{entry_id}` | `204` / `404` |
 
 ```json
 {
@@ -122,13 +133,98 @@ that never contains the secret.
   "slug": "e2e-demo",
   "source": "created",
   "status": "ready",
+  "location": "managed",
+  "root": "/data/workspaces/e2e-demo",
+  "metadata_dir": ".solo",
+  "is_managed": true,
   "file_count": 12,
   "created_at": "2026-10-10T12:00:00Z",
   "updated_at": "2026-10-10T12:00:00Z"
 }
 ```
 
-Upload errors:
+`location` is `managed` (created inside Solo's workspaces folder, `root_path` a
+slug) or `external` (an existing directory, `root_path` absolute). `source` is
+`created`, `opened` or `imported`.
+
+### Create
+
+```json
+{ "name": "my-service" }
+{ "name": "my-service", "parent": "/home/you/projects" }
+```
+
+A non-empty target folder is refused with `400`. `parent` is validated against
+the path policy.
+
+### Open in place
+
+```json
+{ "path": "/home/you/code/my-service", "name": "My Service" }
+```
+
+Nothing is copied. Solo adds `.solo/` and reads the project where it is.
+Idempotent: re-opening the same directory returns the same project. If the
+directory already contains `.solo/project.json`, its `id` is adopted (unless
+another project already claims it), so history from another installation is
+preserved.
+
+| Status | Cause |
+|---|---|
+| `400` | path missing, not a directory, blocked, outside `PROJECT_ROOTS`, or the folder is not writable |
+
+### State tree
+
+```json
+{
+  "version": 1,
+  "generated_at": "2026-10-10T15:37:37Z",
+  "truncated": false,
+  "project": { "id": "…", "name": "My Service", "location": "external" },
+  "root": {
+    "id": "root", "name": "My Service", "kind": "project",
+    "children": [
+      { "id": "group:files", "name": "Files", "kind": "group", "children": [] },
+      { "id": "group:tasks", "name": "Tasks", "kind": "group", "children": [] },
+      { "id": "group:memory", "name": "Memory", "kind": "group", "children": [] },
+      { "id": "group:sessions", "name": "Sessions", "kind": "group", "children": [] }
+    ]
+  }
+}
+```
+
+Node `kind` is one of `project`, `group`, `directory`, `file`, `task`, `memory`,
+`session`. Activity nodes carry a `ref` pointing at their detail file under
+`.solo/`. `?refresh=true` rebuilds the tree from live state before returning.
+
+### Memory
+
+```json
+{
+  "id": "ffb3dd3f…", "kind": "decision", "text": "Uses SQLite",
+  "tags": ["db"], "source": "user", "task_id": null,
+  "created_at": "2026-10-10T15:37:36Z"
+}
+```
+
+`kind` ∈ `note`, `decision`, `fact`, `todo`.
+
+### Configuration
+
+`PUT` is a **deep merge**, so saving one section cannot erase another.
+
+```json
+{
+  "tree":     { "max_depth": 6, "max_entries": 2000, "exclude": ["vendor"] },
+  "memory":   { "max_entries": 500, "auto_capture": true },
+  "sessions": { "max_sessions": 20 },
+  "state":    { "auto_refresh": true }
+}
+```
+
+A `null` value means "use the application default".
+
+### Upload errors
 
 | Status | Cause |
 |---|---|
@@ -137,6 +233,31 @@ Upload errors:
 
 A single wrapping directory in the archive is stripped, so `myapp/src/main.py`
 extracts to `<workspace>/src/main.py`. Nothing is executed during extraction.
+
+---
+
+## Filesystem browser
+
+### `GET /api/fs/list?path=`
+
+Lists **directories only** for the Open Project dialog. Omit `path` for the
+default root (the home directory).
+
+```json
+{
+  "path": "/home/you/code",
+  "parent": "/home/you",
+  "roots": ["/home/you", "/data/workspaces"],
+  "entries": [
+    { "name": "my-service", "path": "/home/you/code/my-service",
+      "hidden": false, "is_project": true }
+  ],
+  "truncated": false
+}
+```
+
+`is_project` marks a directory that already contains Solo metadata. Blocked and
+out-of-allow-list locations return `400` with a human-readable `detail`.
 
 ---
 

@@ -55,7 +55,10 @@ separated by responsibility, not by deployment.
 |---|---|
 | `AuthService` | First-run bootstrap, setup, login/logout, session resolution. |
 | `SettingsService` | Encrypted storage, masking and live connection tests. |
-| `ProjectService` | Create/import/list/delete projects; path-boundary enforcement. |
+| `ProjectService` | Create / open-in-place / import / delete; registers and initialises the per-project store. |
+| `ProjectStoreService` | The `.solo` state store: manifest, config, memory, sessions, task records and the state tree. |
+| `project_paths.py` | **The only place a path is judged.** Blocked list, optional allow-list, symlink-safe resolution, directory browsing. |
+| `api/fs.py` | Directory listing for the Open Project browser (directories only). |
 | `archive.py` | `safe_extract_zip` — the upload threat model lives here. |
 | `project_scan.py` | Bounded project tree scanning and language summary. |
 | `context.py` | Bounded `ContextSnapshot` and the Phase-1 offline answer path. |
@@ -76,6 +79,17 @@ projects ──< tasks ──< task_files
 app_settings (key/value; secret rows are encrypted)
 ```
 
+Each `projects` row points at a directory on disk and is accompanied by a
+`.solo/` state store inside it. See [projects.md](projects.md) for the full
+model.
+
+Project rows carry two location fields:
+
+- `location` — `managed` (created inside `APP_DATA_DIR/workspaces/`, with
+  `root_path` a slug) or `external` (an existing directory, with `root_path` an
+  absolute path).
+- `metadata_dir` — the state directory name inside the project root.
+
 Notable choices:
 
 - **IDs are opaque hex strings** (`uuid4().hex`) for projects, conversations,
@@ -91,7 +105,56 @@ Notable choices:
 
 ---
 
-## 4. Task lifecycle
+## 4. Project model
+
+A project is a **directory on disk**. Solo adds a `.solo/` state store to it and
+records a row in SQLite for indexing.
+
+```
+<project-root>/.solo/
+├── project.json      identity (adopted when re-opening an existing store)
+├── config.json       per-project configuration (deep-merged on update)
+├── .gitignore        keeps Solo state out of the user's repository
+├── state/tree.json   the structured project state tree
+├── memory/           index + one file per entry
+├── sessions/         index + one transcript per conversation
+└── tasks/            index + one record per task (files + events)
+```
+
+Key properties:
+
+- **Self-describing and portable.** Copy a folder, open it elsewhere, and its
+  memory, sessions and task history come with it. On open, an existing
+  `project.json` id is adopted unless another project already claims it.
+- **Union on refresh.** Index nodes whose detail files still exist are preserved
+  even when the local database does not know about them, so opening a project
+  from another installation does not erase its history.
+- **Bounded and exclusion-aware.** Depth, entry counts, retained records and
+  memory size are all capped and configurable per project.
+- **Atomic writes, best-effort sync.** Temp file + `os.replace`. A read-only
+  project logs a warning instead of breaking a task; only initialisation fails
+  loudly.
+- **Ordered for observability.** A finished task is written to disk *before* its
+  terminal status is broadcast, so a UI showing "completed" can always read the
+  record.
+
+### Path policy
+
+`project_paths.py` is the single decision point:
+
+1. resolve fully (symlinks followed) before any check;
+2. must exist and be a directory;
+3. always-blocked set (`/proc`, `/sys`, `/dev`, `/etc`, `/boot`, `/run`, `/root`,
+   `/var/lib/docker`, `/var/lib/solo`) plus the Solo data directory;
+4. optional allow-list via `ALLOW_ANY_PROJECT_PATH=false` + `PROJECT_ROOTS`;
+5. managed projects additionally confined to the workspaces directory.
+
+Browsers receive directory names only, and every path is re-validated on the
+way back in.
+
+---
+
+## 5. Task lifecycle
 
 ```
 QUEUED ──▶ RUNNING ──┬──▶ COMPLETED
@@ -117,7 +180,7 @@ Rules enforced in code:
 
 ---
 
-## 5. Event vocabulary
+## 6. Event vocabulary
 
 The rest of the app never parses provider protocol output. Each adapter
 translates its records into these types (`domain.EventType`):
@@ -131,7 +194,7 @@ never loses data — the UI can always re-fetch from REST.
 
 ---
 
-## 6. Intent routing
+## 7. Intent routing
 
 `IntentRouter.classify(content, has_active_task)` returns one of
 `CHAT_OR_EXPLAIN`, `STEER_ACTIVE_TASK`, `STOP_ACTIVE_TASK`,
@@ -154,7 +217,7 @@ contract**, with Pydantic-validated output.
 
 ---
 
-## 7. Adapter contract
+## 8. Adapter contract
 
 ```python
 class CodingAgentAdapter(Protocol):
@@ -178,7 +241,7 @@ The orchestrator is unaware of which adapter is active.
 
 ---
 
-## 8. Frontend state
+## 9. Frontend state
 
 `WorkspaceProvider` holds the active project, its tasks, messages and the live
 event feed, and mirrors backend state rather than owning it.
@@ -195,7 +258,7 @@ event feed, and mirrors backend state rather than owning it.
 
 ---
 
-## 9. Extension points
+## 10. Extension points
 
 | To add… | Change |
 |---|---|
@@ -204,4 +267,5 @@ event feed, and mirrors backend state rather than owning it.
 | An intent or task type | Add to `domain.py`; the router and orchestrator switch on the enum. |
 | A new panel | Add a component, register it in `DockLayout`'s `components` map. |
 | A new event type | Add to `domain.EventType`; the timeline renders unknown types gracefully. |
+| A project state node kind | Emit it from `_compose_tree` in `project_store.py`; the tree view renders unknown kinds. |
 | A storage backend | Swap the engine in `db.py`; repositories are the only DB consumers. |

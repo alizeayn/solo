@@ -1,52 +1,121 @@
 #!/usr/bin/env bash
 #
-# Voice-First AI Workspace — first-time installer.
+# Solo — one-command installer.
 #
-# Idempotent: running it again on an initialised installation will not overwrite
-# user data, configuration or the admin password. It only rebuilds and restarts.
+#   ./install.sh                 auto: Docker when usable, otherwise native
+#   ./install.sh --docker        force the Docker Compose install
+#   ./install.sh --native        force a native install (Python + Node, no Docker)
+#   ./install.sh --no-start      prepare configuration and credentials only
 #
-# Usage:
-#   ./install.sh              interactive install / update
-#   ./install.sh --no-start   prepare config and credentials only
+# Both paths are idempotent: running the installer again rebuilds and restarts
+# without touching existing data, credentials or configuration.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-PASSWORD_FILE="$ROOT_DIR/initial-admin-password"
-VOLUME_NAME="solo-data"
+MODE="auto"
 START=1
+VOLUME_NAME="solo-data"
+PASSWORD_FILE="$ROOT_DIR/initial-admin-password"
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --docker)   MODE="docker" ;;
+    --native)   MODE="native" ;;
     --no-start) START=0 ;;
-    -h|--help)
-      sed -n '2,12p' "$0"
-      exit 0
-      ;;
-    *) echo "unknown option: $arg" >&2; exit 2 ;;
+    -h|--help)  sed -n '3,10p' "$0"; exit 0 ;;
+    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Generate a 24-character random password.
+#
+# Deliberately avoids `tr -dc ... < /dev/urandom | head -c N`: `head` exits
+# early, `tr` dies of SIGPIPE, and under `set -o pipefail` that aborts the
+# whole script (which is exactly how the first native install failed silently).
+generate_password() {
+  if have python3; then
+    python3 -c 'import secrets,string;a=string.ascii_letters+string.digits;print("".join(secrets.choice(a) for _ in range(24)))'
+  elif have openssl; then
+    openssl rand -base64 48 | tr -d '\n/+=' | cut -c1-24
+  else
+    head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-24
+  fi
+}
+
+# True when something is already listening on the given port.
+port_in_use() {
+  local port="$1"
+  local listeners
+  if have ss; then
+    listeners="$(ss -ltn 2>/dev/null | awk '{print $4}' || true)"
+    grep -qE "[:.]${port}$" <<<"$listeners"
+  elif have lsof; then
+    lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
 
 # --------------------------------------------------------------------------- #
-# 1. Pre-flight checks
+# Mode selection
 # --------------------------------------------------------------------------- #
-log "Checking prerequisites"
-command -v docker >/dev/null 2>&1 \
-  || die "Docker is not installed. Install it first: https://docs.docker.com/engine/install/"
+docker_usable() {
+  have docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
+}
+
+if [[ "$MODE" == "auto" ]]; then
+  if docker_usable; then
+    MODE="docker"
+  else
+    MODE="native"
+    if have docker; then
+      warn "Docker is installed but the daemon is not reachable — using the native install."
+      warn "For Docker: add your user to the 'docker' group, re-login, then ./install.sh --docker"
+    fi
+  fi
+fi
+
+# --------------------------------------------------------------------------- #
+# Native install
+# --------------------------------------------------------------------------- #
+if [[ "$MODE" == "native" ]]; then
+  log "Installing Solo natively (Python + Node, no Docker)"
+  if [[ "$START" -eq 0 ]]; then
+    # Prepare only: build everything, but do not leave a server running.
+    ./solo.sh doctor
+    log "Preparing the environment without starting the server"
+    # shellcheck disable=SC1091
+    set -a; [[ -f .env ]] || cp .env.example .env; source .env; set +a
+    python3 -m venv venv 2>/dev/null || true
+    ./venv/bin/pip install --quiet --upgrade pip
+    ./venv/bin/pip install --quiet -r backend/requirements.txt
+    (cd frontend && { [[ -f package-lock.json ]] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; } && npm run build)
+    log "Environment ready. Start it later with: ./solo.sh start"
+    exit 0
+  fi
+  exec ./solo.sh install
+fi
+
+# --------------------------------------------------------------------------- #
+# Docker install
+# --------------------------------------------------------------------------- #
+have docker || die "Docker is not installed. Install it first (https://docs.docker.com/engine/install/) or use ./install.sh --native"
 docker info >/dev/null 2>&1 \
-  || die "Cannot talk to the Docker daemon. Is it running, and is your user in the 'docker' group?"
+  || die "Cannot talk to the Docker daemon. Start it, or add your user to the 'docker' group and re-login. Use --native to skip Docker."
 docker compose version >/dev/null 2>&1 \
-  || die "The 'docker compose' plugin (v2) is required."
+  || die "The 'docker compose' plugin (v2) is required. Use --native to skip Docker."
 
-# --------------------------------------------------------------------------- #
-# 2. Operational configuration
-# --------------------------------------------------------------------------- #
+log "Installing Solo with Docker Compose"
+
 if [[ ! -f .env ]]; then
   cp .env.example .env
   chmod 600 .env
@@ -59,37 +128,26 @@ fi
 set -a; source .env; set +a
 PORT="${APP_PORT:-8080}"
 
-# --------------------------------------------------------------------------- #
-# 3. Port conflict check
-# --------------------------------------------------------------------------- #
-if command -v ss >/dev/null 2>&1; then
-  if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${PORT}$"; then
-    die "Port ${PORT} is already in use. Set a different APP_PORT in .env and retry."
-  fi
-elif command -v lsof >/dev/null 2>&1; then
-  lsof -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1 \
-    && die "Port ${PORT} is already in use. Set a different APP_PORT in .env and retry."
+if port_in_use "$PORT"; then
+  die "Port ${PORT} is already in use. Set a different APP_PORT in .env and retry."
 fi
 
-# --------------------------------------------------------------------------- #
-# 4. Admin password bootstrap (first run only)
-# --------------------------------------------------------------------------- #
 VOLUME_EXISTS=0
 if docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
   VOLUME_EXISTS=1
 fi
 
-# Docker creates a directory if a bind-mount source file is missing; clean that.
+# Docker creates a directory when a bind-mounted file is missing; clean that up.
 if [[ -d "$PASSWORD_FILE" ]]; then
-  warn "Removing the directory that Docker created at ${PASSWORD_FILE}"
+  warn "Removing the directory Docker created at ${PASSWORD_FILE}"
   rmdir "$PASSWORD_FILE" 2>/dev/null || true
 fi
 
 GENERATED_PASSWORD=""
 if [[ "$VOLUME_EXISTS" -eq 0 ]]; then
-  GENERATED_PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
+  GENERATED_PASSWORD="$(generate_password)"
   umask 077
-  printf '%s' "$GENERATED_PASSWORD" > "$PASSWORD_FILE"
+  printf '%s' "$GENERATED_PASSWORD" >"$PASSWORD_FILE"
   chmod 600 "$PASSWORD_FILE"
   log "Generated a one-time admin password"
 else
@@ -97,50 +155,39 @@ else
   log "Existing installation detected — leaving stored credentials untouched"
 fi
 
-# --------------------------------------------------------------------------- #
-# 5. Build and start
-# --------------------------------------------------------------------------- #
 if [[ "$START" -eq 0 ]]; then
   log "Skipping start (--no-start). Run 'docker compose up -d --build' when ready."
-else
-  log "Building the image (this can take a few minutes on the first run)"
-  docker compose build
-
-  log "Starting the service"
-  docker compose up -d
-
-  log "Waiting for the health check"
-  for _ in $(seq 1 60); do
-    if docker compose exec -T solo curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-
-  if ! docker compose exec -T solo curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1; then
-    warn "The service did not report healthy in time."
-    warn "Inspect the logs with:  docker compose logs --tail=100"
-  fi
+  exit 0
 fi
 
-# --------------------------------------------------------------------------- #
-# 6. Summary
-# --------------------------------------------------------------------------- #
+log "Building the image (this can take a few minutes on the first run)"
+docker compose build
+
+log "Starting the service"
+docker compose up -d
+
+log "Waiting for the health check"
+for _ in $(seq 1 60); do
+  docker compose exec -T solo curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1 && break
+  sleep 2
+done
+docker compose exec -T solo curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1 \
+  || warn "The service did not report healthy in time. Check: docker compose logs --tail=100"
+
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 [[ -z "$HOST_IP" ]] && HOST_IP="<server-ip>"
 
 echo
 echo "──────────────────────────────────────────────────────────────"
-echo " Voice-First AI Workspace"
+echo " Solo"
 echo "──────────────────────────────────────────────────────────────"
 echo " URL:      http://${HOST_IP}:${PORT}"
 echo " Username: admin"
 if [[ -n "$GENERATED_PASSWORD" ]]; then
   echo " Password: ${GENERATED_PASSWORD}"
   echo
-  echo " This password is shown once. It is written to"
-  echo "   ${PASSWORD_FILE}"
-  echo " and is deleted automatically after the first successful start."
+  echo " Shown once. It is written to ${PASSWORD_FILE} and is"
+  echo " deleted automatically after the first successful start."
 else
   echo " Password: unchanged (already configured)"
 fi
@@ -148,7 +195,7 @@ echo
 echo " Next steps"
 echo "   1. Open the URL above and sign in."
 echo "   2. Open Settings and add your OpenRouter and ElevenLabs credentials."
-echo "   3. Create or upload a project."
+echo "   3. Create a project, or open a folder you already have."
 echo
 echo " Manage the service"
 echo "   docker compose logs -f        follow logs"

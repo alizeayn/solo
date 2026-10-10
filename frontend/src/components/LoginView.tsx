@@ -31,8 +31,8 @@ export default function LoginView({
   return (
     <div className="centered">
       <form className="card" onSubmit={submit}>
-        <h1 className="card__title">Voice-First AI Workspace</h1>
-        <p className="card__subtitle">Sign in to continue.</p>
+        <h1 className="card__title">Solo</h1>
+        <p className="card__subtitle">Voice-first AI workspace. Sign in to continue.</p>
 
         {error && (
           <div className="alert alert--error" role="alert" style={{ marginBottom: 14 }}>

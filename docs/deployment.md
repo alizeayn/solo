@@ -1,43 +1,65 @@
 # Deployment
 
-Target: a Linux server with Docker and the Compose v2 plugin.
+Solo runs two ways, and `install.sh` picks the right one automatically:
+
+| Path | When | Needs |
+|---|---|---|
+| **Native** | Docker is unavailable, or `--native` | Python 3.10+, Node 20+, `curl` |
+| **Docker** | The Docker daemon is reachable, or `--docker` | Docker Engine + Compose v2 |
+
+Both install into the checkout folder and both are idempotent.
 
 ---
 
 ## 1. Install
 
 ```bash
-git clone https://github.com/alizeayn/solo.git
-cd solo
+# Native (personal machine)
+./install.sh --native
+
+# Docker (server)
+./install.sh --docker
+
+# Let the installer decide
 ./install.sh
 ```
 
-The installer is idempotent. On an initialised installation it keeps `.env`,
-your stored credentials and all workspaces, and only rebuilds and restarts.
+### Native install
 
-Useful flags:
+`install.sh --native` delegates to `solo.sh install`, which:
+
+1. verifies Python 3.10+ and Node 20+,
+2. creates `venv/` and installs `backend/requirements.txt`,
+3. runs `npm ci && npm run build` to produce `frontend/dist/`,
+4. creates `.env` from `.env.example` (mode `600`) when missing,
+5. on a fresh install, generates a one-time admin password into
+   `data/initial-admin-password` (mode `600`) and prints it,
+6. starts the server in the background (`data/solo.pid`, `data/solo.log`),
+7. waits for `/api/health` and prints the URL.
+
+The application consumes and deletes the password file on first boot. Confirm
+with `ls data/initial-admin-password` (should not exist).
+
+Day-2 operations:
 
 ```bash
-./install.sh --no-start   # prepare config + password, do not start
+./solo.sh status | start | stop | restart | logs | update | doctor
 ```
 
-### What the installer does
+### Docker install
 
-1. Verifies Docker and `docker compose`.
-2. Creates `.env` from `.env.example` (`chmod 600`) if absent.
-3. Fails early if `APP_PORT` is already in use.
-4. On a fresh install, generates a 24-character admin password and writes it to
-   `./initial-admin-password` (`0600`), printing it once.
-5. `docker compose build && docker compose up -d`.
-6. Polls `/api/health` and prints the URL.
+```bash
+./install.sh --docker
+```
 
-The password file is bind-mounted to `/data/initial-admin-password`. The
-application reads it at startup, creates the `admin` account, and deletes it —
-so the plaintext does not survive the first successful boot. Confirm with
-`ls initial-admin-password` (should not exist afterwards).
+The installer verifies Docker, creates `.env`, checks that `APP_PORT` is free,
+generates the one-time admin password into `./initial-admin-password`
+(bind-mounted to `/data/initial-admin-password`, consumed and deleted on first
+boot), builds the image, starts the service and waits for the health check.
 
-If the file is absent (e.g. you ran `docker compose up` directly), the app skips
-bootstrapping and the UI shows the first-run setup screen instead.
+> If Docker creates a *directory* at the bind-mount path (what happens when the
+> source file is missing), Solo treats it as "no bootstrap password" and shows
+> the first-run setup screen instead of failing.
 
 ---
 
@@ -49,30 +71,57 @@ Edit `.env`, then `docker compose up -d`.
 |---|---|---|
 | `APP_PORT` | `8080` | Host port mapped to the container. |
 | `SESSION_TTL_HOURS` | `168` | Session lifetime. |
+| `SESSION_COOKIE_SECURE` | *(auto)* | `Secure` flag; auto sets it only over HTTPS. |
 | `MAX_UPLOAD_MB` | `200` | Rejected with HTTP 413 above this. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for diagnosis; secrets stay redacted. |
+| `METADATA_DIR_NAME` | `.solo` | Per-project state folder name. |
+| `PROJECT_ROOTS` | *(empty)* | `:`-separated extra roots Open Project may read. |
+| `ALLOW_ANY_PROJECT_PATH` | `true` | Set `false` to restrict opening to `PROJECT_ROOTS` + home + managed workspaces. |
 
 Do **not** put API keys in `.env`. They are entered in the Settings UI and
-stored encrypted inside the data volume.
+stored encrypted inside the data directory.
+
+### Project path policy on a shared server
+
+The default (`ALLOW_ANY_PROJECT_PATH=true`) is designed for a personal,
+local-first install: any readable folder may be opened. On a server that others
+can reach, lock it down:
+
+```bash
+# .env
+ALLOW_ANY_PROJECT_PATH=false
+PROJECT_ROOTS=/srv/projects:/opt/repos
+```
+
+With that set, Open Project accepts only folders inside those roots (plus the
+home directory and Solo's managed workspaces folder). `/proc`, `/sys`, `/dev`,
+`/etc`, `/boot`, `/run`, `/root` and the Solo `data/` directory are rejected in
+either mode. See [projects.md](projects.md#6-the-path-policy).
 
 ---
 
 ## 3. Data and persistence
 
-Everything stateful lives in the named volume `solo-data`, mounted at `/data`:
+Everything stateful lives in `data/` (native) or the `solo-data` volume mounted
+at `/data` (Docker):
 
 ```
 /data/
 ├── app.db            SQLite database (WAL mode)
 ├── master.key        Fernet key, 0600 — needed to decrypt secrets
 ├── secrets.enc       Encrypted API keys
-├── workspaces/       One directory per project
+├── workspaces/       Projects created or imported by Solo
 └── uploads/          Transient ZIP upload staging
 ```
 
-`master.key` and `app.db` are useless apart: losing the key makes stored
-credentials undecryptable, and losing the database loses the ciphertext. Back
-up the whole volume.
+Projects **opened in place** live wherever they already are; only a `.solo/`
+folder is added there. `master.key` and `app.db` are useless apart: losing the
+key makes stored credentials undecryptable, and losing the database loses the
+ciphertext. Back up the whole data directory.
+
+> A backup taken with `./scripts/backup.sh` covers the Docker volume only.
+> Projects opened in place outside it are not included — back those up with
+your normal file backups.
 
 ---
 
@@ -179,19 +228,30 @@ directory are both usable; `"degraded"` means one of them is not.
 | `Port <n> is already in use` | Something else is listening | Change `APP_PORT`, or stop the other service. |
 | Container unhealthy | App failed to start | `docker compose logs --tail=100`. |
 | `unable to decrypt stored secret` in logs | `master.key` does not match `secrets.enc` (partial restore) | Re-enter the keys in Settings, or restore a matching backup. |
+| `that location is not allowed` when opening a project | A blocked system path, the Solo `data/` directory, or outside `PROJECT_ROOTS` with `ALLOW_ANY_PROJECT_PATH=false` | Choose a folder under an allowed root, or widen `PROJECT_ROOTS`. |
+| `cannot write project metadata` | The project folder is not writable by the Solo process | Fix ownership/permissions, or open a different folder. |
 | Badge "Pi" grey | `pi` binary unavailable to the process | Expected in the Phase 1 image; relevant from Phase 2. |
 
 ### Running without Docker
 
 ```bash
+./solo.sh install          # or: ./install.sh --native
+./solo.sh start
+```
+
+Manually:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
 python3 -m venv venv
 ./venv/bin/pip install -r backend/requirements.txt
 (cd frontend && npm ci && npm run build)
-cd backend
-APP_ENV=production APP_DATA_DIR=/var/lib/solo \
-  FRONTEND_DIST="$PWD/../frontend/dist" \
-  ../venv/bin/python -m app
+PYTHONPATH="$PWD/backend" APP_DATA_DIR="$PWD/data" \
+  FRONTEND_DIST="$PWD/frontend/dist" ./venv/bin/python -m app
 ```
 
+Running from the repository **root** matters: the backend reads `.env` from the
+working directory and resolves `./data` relative to it.
+
 Put this behind systemd (or the reverse proxy above) and run it as an
-unprivileged user.
+unprivileged user. `./solo.sh` already manages the PID file, log and restart.

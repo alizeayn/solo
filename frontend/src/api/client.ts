@@ -11,10 +11,16 @@ import type {
   AppSettings,
   AuthStatus,
   ConnectionTestResult,
+  FsListing,
   Health,
+  MemoryCreate,
+  MemoryEntry,
   Message,
   MessageDispatchResult,
   Project,
+  ProjectConfig,
+  ProjectSummary,
+  ProjectTree,
   SettingsPatch,
   Task,
   TaskDetail,
@@ -107,8 +113,14 @@ export const api = {
 
   projects: {
     list: () => request<Project[]>('/api/projects'),
-    create: (name: string) =>
-      request<Project>('/api/projects', json({ name })),
+    create: (name: string, parent?: string) =>
+      request<Project>(
+        '/api/projects',
+        json(parent ? { name, parent } : { name }),
+      ),
+    /** Open an existing directory in place. Nothing is copied or uploaded. */
+    open: (path: string, name?: string) =>
+      request<Project>('/api/projects/open', json(name ? { path, name } : { path })),
     upload: (file: File, name?: string) => {
       const form = new FormData()
       form.append('file', file)
@@ -119,8 +131,44 @@ export const api = {
       })
     },
     get: (id: string) => request<Project>(`/api/projects/${id}`),
-    remove: (id: string) =>
-      request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+    /** `removeFiles` defaults to true for managed projects, false for opened ones. */
+    remove: (id: string, removeFiles?: boolean) =>
+      request<void>(
+        `/api/projects/${id}${
+          removeFiles === undefined ? '' : `?remove_files=${removeFiles}`
+        }`,
+        { method: 'DELETE' },
+      ),
+    summary: (id: string) =>
+      request<ProjectSummary>(`/api/projects/${id}/summary`),
+    tree: (id: string, refresh = false) =>
+      request<ProjectTree>(
+        `/api/projects/${id}/tree${refresh ? '?refresh=true' : ''}`,
+      ),
+    config: (id: string) => request<ProjectConfig>(`/api/projects/${id}/config`),
+    updateConfig: (id: string, patch: ProjectConfig) =>
+      request<ProjectConfig>(`/api/projects/${id}/config`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      }),
+    memory: {
+      list: (id: string, limit = 200) =>
+        request<MemoryEntry[]>(`/api/projects/${id}/memory?limit=${limit}`),
+      add: (id: string, entry: MemoryCreate) =>
+        request<MemoryEntry>(`/api/projects/${id}/memory`, json(entry)),
+      remove: (id: string, entryId: string) =>
+        request<void>(`/api/projects/${id}/memory/${entryId}`, {
+          method: 'DELETE',
+        }),
+    },
+  },
+
+  fs: {
+    /** List sub-directories for the Open Project browser. */
+    list: (path?: string) =>
+      request<FsListing>(
+        `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`,
+      ),
   },
 
   tasks: {

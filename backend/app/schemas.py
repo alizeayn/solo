@@ -98,6 +98,14 @@ class ProjectOut(ORMModel):
     slug: str
     source: str
     status: str
+    #: ``managed`` (created inside Solo's workspaces directory) or ``external``
+    #: (an existing directory opened in place).
+    location: str = "managed"
+    #: Absolute path of the project root, filled in by the API layer.
+    root: str | None = None
+    #: Directory name holding Solo state inside the project root.
+    metadata_dir: str = ".solo"
+    is_managed: bool = True
     created_at: datetime
     updated_at: datetime
     file_count: int = 0
@@ -105,6 +113,108 @@ class ProjectOut(ORMModel):
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    #: Optional parent directory. When omitted, the project is created inside
+    #: Solo's managed workspaces directory.
+    parent: str | None = Field(default=None, max_length=4096)
+
+
+class ProjectOpen(BaseModel):
+    """Open an existing directory on this machine, in place."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    name: str | None = Field(default=None, max_length=200)
+
+
+# --------------------------------------------------------------------------- #
+# Project state store: tree, memory, configuration
+# --------------------------------------------------------------------------- #
+class TreeNode(BaseModel):
+    """One node of the structured project state tree.
+
+    Extra keys are preserved because node shapes differ by ``kind``
+    (file, directory, task, memory, session, group, project).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    kind: str
+    children: list["TreeNode"] = Field(default_factory=list)
+
+
+class ProjectTreeOut(BaseModel):
+    version: int
+    generated_at: str
+    truncated: bool = False
+    project: dict[str, Any] = Field(default_factory=dict)
+    root: TreeNode
+
+
+class MemoryEntryOut(BaseModel):
+    id: str
+    kind: str
+    text: str
+    tags: list[str] = Field(default_factory=list)
+    source: str = "user"
+    task_id: str | None = None
+    created_at: str | None = None
+
+
+class MemoryCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    kind: str = Field(default="note", max_length=32)
+    tags: list[str] = Field(default_factory=list, max_length=16)
+
+
+class ProjectSummaryOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    project_id: str
+    name: str
+    location: str
+    root: str
+    metadata_dir: str
+    metadata_exists: bool
+    file_count: int
+    directory_count: int
+    task_count: int
+    session_count: int
+    memory_count: int
+    task_status_counts: dict[str, int] = Field(default_factory=dict)
+    tree_generated_at: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectConfigUpdate(BaseModel):
+    """Partial per-project configuration; deep-merged into the stored config."""
+
+    model_config = ConfigDict(extra="allow")
+
+    tree: dict[str, Any] | None = None
+    memory: dict[str, Any] | None = None
+    sessions: dict[str, Any] | None = None
+    state: dict[str, Any] | None = None
+    agent: dict[str, Any] | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Filesystem browser (Open Project)
+# --------------------------------------------------------------------------- #
+class FsEntry(BaseModel):
+    name: str
+    path: str
+    hidden: bool = False
+    #: True when the directory already contains Solo project metadata.
+    is_project: bool = False
+
+
+class FsListing(BaseModel):
+    path: str
+    parent: str | None = None
+    roots: list[str] = Field(default_factory=list)
+    entries: list[FsEntry] = Field(default_factory=list)
+    truncated: bool = False
 
 
 # --------------------------------------------------------------------------- #

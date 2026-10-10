@@ -20,6 +20,7 @@ from .services.auth_service import AuthService
 from .services.event_bus import EventBus
 from .services.orchestrator import OrchestratorService
 from .services.project_service import ProjectService
+from .services.project_store import ProjectStoreService
 from .services.settings_service import SettingsService
 
 
@@ -33,6 +34,7 @@ class Container:
     adapter: CodingAgentAdapter
     auth: AuthService
     settings_service: SettingsService
+    store: ProjectStoreService
     projects: ProjectService
     orchestrator: OrchestratorService
 
@@ -45,6 +47,7 @@ class Container:
         cipher = SecretCipher(settings.key_path)
         bus = EventBus()
         adapter = build_adapter(settings, backend=settings.agent_backend)
+        store = ProjectStoreService(session_factory, settings)
 
         return cls(
             settings=settings,
@@ -55,12 +58,14 @@ class Container:
             adapter=adapter,
             auth=AuthService(session_factory, settings),
             settings_service=SettingsService(session_factory, cipher, settings),
-            projects=ProjectService(session_factory, settings),
+            store=store,
+            projects=ProjectService(session_factory, settings, store),
             orchestrator=OrchestratorService(
                 session_factory=session_factory,
                 bus=bus,
                 adapter=adapter,
                 settings=settings,
+                store=store,
             ),
         )
 

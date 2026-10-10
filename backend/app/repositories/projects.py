@@ -30,11 +30,32 @@ class ProjectRepository:
         slug: str,
         root_path: str,
         source: str = "created",
+        location: str = "managed",
+        metadata_dir: str = ".solo",
+        project_id: str | None = None,
     ) -> Project:
-        project = Project(name=name, slug=slug, root_path=root_path, source=source)
+        project = Project(
+            name=name,
+            slug=slug,
+            root_path=root_path,
+            source=source,
+            location=location,
+            metadata_dir=metadata_dir,
+        )
+        if project_id:
+            project.id = project_id
         self.session.add(project)
         await self.session.flush()
         return project
+
+    async def find_by_root(self, root_path: str, location: str) -> Project | None:
+        """Locate a project by its stored root, to make 'open' idempotent."""
+        result = await self.session.execute(
+            select(Project)
+            .where(Project.root_path == root_path, Project.location == location)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def delete(self, project: Project) -> None:
         await self.session.delete(project)

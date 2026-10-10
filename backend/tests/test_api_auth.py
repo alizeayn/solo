@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.main import create_app
 from tests.conftest import ADMIN
 
 PROTECTED = [
@@ -70,6 +72,34 @@ def test_logout_invalidates_session(authed):
     assert authed.post("/api/auth/logout").status_code == 200
     # Cookie is cleared, so protected routes reject again.
     assert authed.get("/api/projects").status_code == 401
+
+
+def test_session_cookie_is_not_secure_over_plain_http(client):
+    """Browsers reject Secure cookies over plain http, which would break sign-in
+    on a local install. Auto-detection keeps HTTP usable while still flagging
+    the cookie when the request arrives over HTTPS."""
+    response = client.post("/api/auth/setup", json=ADMIN)
+    assert response.status_code == 201
+    cookie = response.headers["set-cookie"]
+    assert "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie
+    assert "Secure" not in cookie
+
+
+def test_session_cookie_is_secure_when_the_scheme_is_https(settings_factory):
+    with TestClient(
+        create_app(settings_factory()), base_url="https://testserver"
+    ) as https_client:
+        response = https_client.post("/api/auth/setup", json=ADMIN)
+        assert response.status_code == 201
+        assert "Secure" in response.headers["set-cookie"]
+
+
+def test_session_cookie_secure_can_be_forced(settings_factory):
+    settings = settings_factory(session_cookie_secure=True)
+    with TestClient(create_app(settings)) as forced:
+        response = forced.post("/api/auth/setup", json=ADMIN)
+        assert "Secure" in response.headers["set-cookie"]
 
 
 def test_login_flow(authed):

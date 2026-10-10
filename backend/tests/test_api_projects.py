@@ -8,7 +8,8 @@ import zipfile
 import pytest
 
 from app.config import Settings
-from app.services.project_service import ProjectError, resolve_project_root
+from app.services.project_paths import ProjectPathError
+from app.services.project_service import resolve_project_root
 
 
 def _zip_bytes(entries: dict[str, str]) -> bytes:
@@ -59,7 +60,9 @@ def test_upload_extracts_archive(authed):
     )
     assert response.status_code == 201, response.text
     project = response.json()
-    assert project["source"] == "uploaded"
+    assert project["source"] == "imported"
+    assert project["location"] == "managed"
+    assert project["is_managed"] is True
     # Single wrapping directory is stripped, so files land at the root.
     assert project["file_count"] == 3
 
@@ -110,9 +113,10 @@ def test_resolve_project_root_rejects_escapes(tmp_path):
     settings.ensure_directories()
 
     class FakeProject:
+        location = "managed"
         root_path = "../../etc"
 
-    with pytest.raises(ProjectError):
+    with pytest.raises(ProjectPathError):
         resolve_project_root(settings, FakeProject())
 
 
@@ -121,6 +125,7 @@ def test_resolve_project_root_accepts_valid_path(tmp_path):
     settings.ensure_directories()
 
     class FakeProject:
+        location = "managed"
         root_path = "my-project"
 
     assert resolve_project_root(settings, FakeProject()) == (

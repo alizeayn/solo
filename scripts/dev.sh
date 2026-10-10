@@ -23,12 +23,18 @@ die() { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 [[ -x "$PY" ]] || die "Virtualenv not found at ${VENV}. Create it with: python3 -m venv venv"
 
 run_backend() {
+  [[ -f "$ROOT_DIR/.env" ]] || cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
   log "Backend:  http://127.0.0.1:${APP_PORT:-8080}  (docs at /api/docs)"
-  cd "$ROOT_DIR/backend"
-  APP_ENV=development exec "$VENV/bin/uvicorn" app.main:app \
+  # Run from the repository root so `.env`, `./data` and the SQLite database
+  # resolve to the same places as the native install.
+  cd "$ROOT_DIR"
+  export PYTHONPATH="$ROOT_DIR/backend"
+  export FRONTEND_DIST="${FRONTEND_DIST:-$ROOT_DIR/frontend/dist}"
+  exec "$VENV/bin/uvicorn" app.main:app \
     --host "${APP_HOST:-127.0.0.1}" \
     --port "${APP_PORT:-8080}" \
-    --reload
+    --reload \
+    --reload-dir "$ROOT_DIR/backend"
 }
 
 run_frontend() {

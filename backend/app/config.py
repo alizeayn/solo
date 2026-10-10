@@ -45,9 +45,33 @@ class Settings(BaseSettings):
 
     # --- Sessions / auth ---
     session_ttl_hours: int = 168  # 7 days
+    # Mark the session cookie ``Secure``.
+    #   unset (default) -> auto: Secure only when the request is HTTPS, so the
+    #                      app works over plain http://localhost without
+    #                      silently breaking sign-in.
+    #   true            -> always Secure (use behind a TLS proxy).
+    #   false           -> never Secure.
+    session_cookie_secure: bool | None = None
     # Optional bootstrap password consumed once on first start. When set and no
     # user exists yet, an admin account is created from it. Used by install.sh.
     admin_password: str | None = None
+
+    # --- Projects ---
+    # Name of the per-project metadata directory created inside a project root.
+    metadata_dir_name: str = ".solo"
+    # Colon-separated extra roots that "Open Project" may read from. Always
+    # additive to the built-in defaults (home directory + managed workspaces).
+    project_roots: str = ""
+    # When True (default), any readable directory may be opened except the
+    # always-blocked system paths and the Solo data directory. Set to False to
+    # restrict opening to ``project_roots`` plus the built-in defaults.
+    allow_any_project_path: bool = True
+    # Bounds for the generated project state tree.
+    max_tree_depth: int = 10
+    max_tree_entries: int = 5000
+    # When True, a ``.gitignore`` is written inside the metadata directory so a
+    # project's Solo state does not pollute the user's repository by default.
+    metadata_write_gitignore: bool = True
 
     # --- Uploads ---
     max_upload_mb: int = 200
@@ -91,6 +115,20 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @property
+    def configured_project_roots(self) -> list[Path]:
+        """Extra roots the operator has explicitly allowed, from PROJECT_ROOTS."""
+        roots: list[Path] = []
+        for raw in self.project_roots.split(":"):
+            cleaned = raw.strip()
+            if not cleaned:
+                continue
+            try:
+                roots.append(Path(cleaned).expanduser().resolve())
+            except OSError:  # pragma: no cover - unresolvable path
+                continue
+        return roots
 
     @property
     def max_uncompressed_bytes(self) -> int:

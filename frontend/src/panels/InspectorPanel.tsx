@@ -1,9 +1,13 @@
 /**
  * Panel C — Inspector / Artifacts.
  *
- * Initially passive: it lists task history and shows details for the selected
- * task. It is deliberately generic so later phases can render a file excerpt, a
- * diagram or a generated artifact here without restructuring the layout.
+ * Two views:
+ * * **Task** — history and details for the selected task.
+ * * **Project state** — the structured `.solo/` store: state tree, memory and
+ *   per-project configuration.
+ *
+ * It is deliberately generic so later phases can render a file excerpt or a
+ * generated diagram here without restructuring the layout.
  */
 
 import { useEffect, useState } from 'react'
@@ -12,9 +16,13 @@ import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import type { TaskDetail } from '../types'
 import { relativeTime, statusLabel, statusTone } from '../utils/format'
+import ProjectStatePanel from './ProjectStatePanel'
+
+type Tab = 'task' | 'state'
 
 export default function InspectorPanel() {
   const { tasks, selectedTaskId, selectTask, project } = useWorkspace()
+  const [tab, setTab] = useState<Tab>('task')
   const [detail, setDetail] = useState<TaskDetail | null>(null)
 
   useEffect(() => {
@@ -42,9 +50,28 @@ export default function InspectorPanel() {
       <div className="panel__bar">
         <span className="panel__bar-title">Inspector</span>
         <span className="header__spacer" />
-        <span className="hint">
-          {project ? `${tasks.length} task(s)` : 'no project'}
-        </span>
+        {project && (
+          <div className="stacked__tabs" style={{ border: 'none', padding: 0 }}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'task'}
+              className={`stacked__tab ${tab === 'task' ? 'stacked__tab--active' : ''}`}
+              onClick={() => setTab('task')}
+            >
+              Task
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'state'}
+              className={`stacked__tab ${tab === 'state' ? 'stacked__tab--active' : ''}`}
+              onClick={() => setTab('state')}
+            >
+              Project state
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="panel__body">
@@ -53,10 +80,12 @@ export default function InspectorPanel() {
             <div className="empty__glyph">◇</div>
             <div className="empty__title">Nothing to inspect</div>
             <div className="empty__text">
-              Select or create a project. Task details, changed files and future
-              artifacts will appear here.
+              Create or open a project. Task details, the project state tree and
+              memory will appear here.
             </div>
           </div>
+        ) : tab === 'state' ? (
+          <ProjectStatePanel projectId={project.id} />
         ) : tasks.length === 0 ? (
           <div className="empty">
             <div className="empty__glyph">◇</div>

@@ -10,11 +10,13 @@ import StatusBadge, { realtimeTone } from './StatusBadge'
 export default function Header({
   username,
   onOpenSettings,
+  onNewProject,
   onOpenProject,
   onSignedOut,
 }: {
   username: string
   onOpenSettings: () => void
+  onNewProject: () => void
   onOpenProject: () => void
   onSignedOut: () => void | Promise<void>
 }) {
@@ -42,7 +44,7 @@ export default function Header({
         <span className="header__mark" aria-hidden="true">
           ◆
         </span>
-        <span>Voice-First Workspace</span>
+        <span>Solo</span>
       </div>
 
       <div className="header__group">
@@ -63,9 +65,20 @@ export default function Header({
             </option>
           ))}
         </select>
+        <button type="button" className="btn" onClick={onNewProject}>
+          + Create Project
+        </button>
         <button type="button" className="btn" onClick={onOpenProject}>
           Open Project
         </button>
+        {project?.location === 'external' && (
+          <span
+            className="context-chip"
+            title={`Opened in place: ${project.root ?? ''}`}
+          >
+            in place
+          </span>
+        )}
       </div>
 
       <div className="header__spacer" />

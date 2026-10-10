@@ -924,3 +924,272 @@ textarea {
 .dockview-theme-abyss .dv-tab.dv-active-tab {
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------------ */
+/* Fieldset / radio groups                                             */
+/* ------------------------------------------------------------------ */
+.fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.fieldset > legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Directory browser                                                   */
+/* ------------------------------------------------------------------ */
+.browser {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.browser__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.browser__bar > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.browser__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.browser__roots {
+  width: auto;
+  max-width: 190px;
+  flex: none;
+}
+
+.browser__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.browser__entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+
+.browser__entry:hover {
+  background: var(--surface-3);
+}
+
+.browser__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser__empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Project state panel                                                 */
+/* ------------------------------------------------------------------ */
+.state-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.state-panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  gap: 8px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.stat__value {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.stat__label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* State tree                                                          */
+/* ------------------------------------------------------------------ */
+.tree {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  max-height: 46vh;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.tree__node {
+  display: block;
+}
+
+.tree__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px 3px 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.tree__row:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.tree__row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.tree__chevron {
+  width: 12px;
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.tree__glyph {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tree__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+/* ------------------------------------------------------------------ */
+/* Memory                                                              */
+/* ------------------------------------------------------------------ */
+.memory {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memory__compose {
+  display: flex;
+  gap: 6px;
+}
+
+.memory__compose > .input:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory__compose > select {
+  width: auto;
+  flex: none;
+}
+
+.memory__item {
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.memory__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.memory__head > .hint {
+  flex: 1;
+}
+
+.memory__text {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Project configuration                                               */
+/* ------------------------------------------------------------------ */
+.config__json {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11.5px;
+  max-height: 240px;
+  overflow: auto;
+}

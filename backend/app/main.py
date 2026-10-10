@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import auth as auth_api
+from .api import fs as fs_api
 from .api import health as health_api
 from .api import messages as messages_api
 from .api import projects as projects_api
@@ -66,7 +67,7 @@ def _mount_frontend(app: FastAPI, settings: Settings) -> None:
     @app.get("/", include_in_schema=False)
     async def dev_root() -> dict[str, str]:
         return {
-            "name": "Voice-First AI Workspace API",
+            "name": "Solo API",
             "version": __version__,
             "docs": "/api/docs",
             "note": "Frontend is served by Vite in development.",
@@ -98,7 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await container.close()
 
     app = FastAPI(
-        title="Voice-First AI Workspace",
+        title="Solo",
         version=__version__,
         lifespan=lifespan,
         docs_url="/api/docs",
@@ -114,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- Authenticated routes (enforced by the CurrentUser dependency) ---
     app.include_router(settings_api.router)
     app.include_router(projects_api.router)
+    app.include_router(fs_api.router)
     app.include_router(tasks_api.router)
     app.include_router(messages_api.router)
 

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Voice-First AI Workspace — single-image build.
+# Solo — single-image build.
 #
 # A user-facing origin is served by one container: FastAPI serves the REST API,
 # the WebSocket and the statically built React frontend.

@@ -112,6 +112,28 @@ class PiRuntimeOut(BaseModel):
     executable: str | None = None
     agent_dir: str | None = None
     detail: str | None = None
+    #: True when Solo's own installation is present and runnable.
+    installed: bool = False
+    #: True only when the runtime was actually started and answered a command.
+    verified: bool = False
+    #: ``managed`` (Solo's own copy), ``external`` (an explicit override), ``none``.
+    source: str = "none"
+    #: True when ``source == "managed"`` — i.e. the host's Pi is not involved.
+    isolated: bool = False
+    node: str | None = None
+    runtime_dir: str | None = None
+    installed_at: str | None = None
+    last_error: str | None = None
+
+
+class PiInstallOut(BaseModel):
+    ok: bool
+    message: str
+    detail: str | None = None
+    version: str | None = None
+    duration_ms: int = 0
+    output: str | None = None
+    runtime: PiRuntimeOut | None = None
 
 
 class PiProviderOut(BaseModel):
@@ -162,6 +184,8 @@ class PiStatusOut(BaseModel):
     minimal_harness: bool = True
     agent_dir: str | None = None
     auth_file: str | None = None
+    runtime_dir: str | None = None
+    node: str | None = None
     configured_providers: list[str] = Field(default_factory=list)
     sessions: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -225,6 +249,25 @@ class OrchestrationStateOut(BaseModel):
 
 class OrchestrationPlanIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=8000)
+
+
+# --------------------------------------------------------------------------- #
+# Project files (Writing panel and uploads)
+# --------------------------------------------------------------------------- #
+class FileContentOut(BaseModel):
+    path: str
+    content: str = ""
+    size: int = 0
+    truncated: bool = False
+    #: True when the file is not valid UTF-8 text; `content` is then empty.
+    binary: bool = False
+
+
+class FileWriteIn(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+    content: str = Field(default="", max_length=2_000_000)
+    #: False makes the write fail when the file already exists.
+    overwrite: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -472,6 +515,10 @@ class HealthOut(BaseModel):
     workspaces_dir: bool
     coding_agent: str
     pi_version: str | None = None
+    #: True when coding tasks run through Solo's own Pi Agent runtime.
+    pi_isolated: bool = False
+    #: Database schema version after startup migrations.
+    schema_version: int = 0
 
 
 class WsEnvelope(BaseModel):

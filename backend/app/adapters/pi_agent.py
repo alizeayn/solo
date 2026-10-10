@@ -1,8 +1,10 @@
 """Pi Coding Agent adapter.
 
-Implements Solo's :class:`CodingAgentAdapter` contract on top of Pi's RPC mode.
-This is the only place that launches Pi; everything provider- or
-protocol-specific lives in `pi_rpc.py`, `pi_events.py` and `pi_session.py`.
+Implements Solo's :class:`CodingAgentAdapter` contract on top of Pi's RPC mode,
+using **Solo's own isolated Pi Agent runtime** — never the host's installation.
+
+Everything provider- or protocol-specific lives in `pi_rpc.py`, `pi_events.py`,
+`pi_session.py` and `services/pi_runtime.py`.
 
 Verified behaviour this module depends on (see `Pi Agent Docs/20-solo-integration.md`):
 
@@ -10,22 +12,21 @@ Verified behaviour this module depends on (see `Pi Agent Docs/20-solo-integratio
   ``agent_settled`` ends a run;
 * provider failures arrive as ``message_end`` records with an error stop reason,
   while the child process stays healthy;
-* a fresh agent directory has no model catalog, so Solo never overrides Pi's
-  agent directory by default.
+* a fresh but *authenticated* agent directory resolves models from the package's
+  bundled provider catalog, so isolation costs nothing.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from ..config import Settings
+from ..services.pi_runtime import PiRuntime, RuntimeStatus
 from .base import AgentEvent, AgentResult, EventCallback
+from .pi_rpc import PiRpcError, PiUnavailableError
 from .pi_session import (
     DEFAULT_RUN_TIMEOUT,
     PiLaunchConfig,
@@ -33,7 +34,6 @@ from .pi_session import (
     PiSessionManager,
     no_model_event,
 )
-from .pi_rpc import PiRpcError, PiUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -42,75 +42,64 @@ ConfigLoader = Callable[[], Awaitable[PiLaunchConfig]]
 
 @dataclass(slots=True)
 class PiRuntimeInfo:
+    """Summary of Solo's own Pi runtime, for health and Settings.
+
+    Kept as a flat dataclass because it is consumed by the health endpoint and
+    the Settings UI; :meth:`RuntimeStatus.to_dict` carries the fuller picture.
+    """
+
     available: bool
     version: str | None
     rpc_supported: bool
     detail: str
     executable: str | None = None
     agent_dir: str | None = None
+    #: ``managed`` (Solo's own copy), ``external`` (an explicit override), ``none``.
+    source: str = "none"
+    #: True only when the runtime was actually started and answered a command.
+    verified: bool = False
+    node: str | None = None
+    runtime_dir: str | None = None
+    installed_at: str | None = None
+    last_error: str | None = None
+
+    @classmethod
+    def from_status(cls, status: RuntimeStatus) -> "PiRuntimeInfo":
+        return cls(
+            available=status.installed,
+            version=status.version,
+            rpc_supported=status.installed,
+            detail=status.detail,
+            executable=status.executable,
+            agent_dir=status.agent_dir,
+            source=status.source,
+            verified=status.verified,
+            node=status.node,
+            runtime_dir=status.runtime_dir,
+            installed_at=status.installed_at,
+            last_error=status.last_error,
+        )
 
 
 async def probe_pi_runtime(
-    *, timeout: float = 15.0, executable: str = "pi"
+    settings: Settings, *, verify: bool = False
 ) -> PiRuntimeInfo:
-    """Detect the ``pi`` CLI and read its version. Never raises."""
-    resolved = shutil.which(executable)
-    agent_dir = os.environ.get(
-        "PI_CODING_AGENT_DIR", os.path.expanduser("~/.pi/agent")
-    )
-    if not resolved:
-        return PiRuntimeInfo(
-            available=False,
-            version=None,
-            rpc_supported=False,
-            detail=(
-                f"The '{executable}' executable was not found on PATH. Install it with "
-                "'npm install -g @earendil-works/pi-coding-agent', then restart Solo."
-            ),
-            agent_dir=agent_dir,
-        )
+    """Describe Solo's isolated Pi runtime. Never raises."""
     try:
-        process = await asyncio.create_subprocess_exec(
-            resolved,
-            "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, OSError) as exc:
+        status = await PiRuntime(settings).status(verify=verify)
+    except Exception as exc:  # noqa: BLE001 - a probe must never break health
+        logger.warning("Pi runtime probe failed", exc_info=True)
         return PiRuntimeInfo(
             available=False,
             version=None,
             rpc_supported=False,
-            detail=f"Could not run '{executable} --version': {type(exc).__name__}.",
-            executable=resolved,
-            agent_dir=agent_dir,
+            detail=f"{type(exc).__name__}: {exc}",
         )
-
-    if process.returncode != 0:
-        detail = (stderr or b"").decode("utf-8", "replace").strip()[:200]
-        return PiRuntimeInfo(
-            available=False,
-            version=None,
-            rpc_supported=False,
-            detail=f"'{executable} --version' exited with code {process.returncode}: {detail}",
-            executable=resolved,
-            agent_dir=agent_dir,
-        )
-
-    version = stdout.decode("utf-8", "replace").strip() or None
-    return PiRuntimeInfo(
-        available=True,
-        version=version,
-        rpc_supported=True,
-        detail=f"Pi CLI {version} detected; RPC mode available.",
-        executable=resolved,
-        agent_dir=agent_dir,
-    )
+    return PiRuntimeInfo.from_status(status)
 
 
 class PiCodingAgentAdapter:
-    """Runs coding tasks through a managed Pi RPC subprocess."""
+    """Runs coding tasks through Solo's own managed Pi RPC subprocess."""
 
     name = "pi"
 
@@ -119,25 +108,43 @@ class PiCodingAgentAdapter:
         settings: Settings,
         *,
         config_loader: ConfigLoader | None = None,
+        runtime: PiRuntime | None = None,
         manager: PiSessionManager | None = None,
         run_timeout: float = DEFAULT_RUN_TIMEOUT,
     ) -> None:
         self._settings = settings
         self._config_loader = config_loader
+        self._runtime = runtime or PiRuntime(settings)
         self._manager = manager or PiSessionManager(
-            executable=settings.pi_executable, run_timeout=run_timeout
+            self._runtime, run_timeout=run_timeout
         )
         self._by_task: dict[str, PiSession] = {}
         self._started = False
+
+    @property
+    def runtime(self) -> PiRuntime:
+        return self._runtime
 
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
     async def start(self) -> None:
         self._started = True
-        info = await probe_pi_runtime(executable=self._settings.pi_executable)
-        if not info.available:
-            logger.warning("Pi backend selected but unavailable: %s", info.detail)
+        status = await self._runtime.status()
+        if not status.installed:
+            logger.warning("Pi backend selected but unavailable: %s", status.detail)
+        elif status.source == "external":
+            logger.warning(
+                "Pi backend is using an externally configured executable (%s); "
+                "Solo's own isolated runtime is not in use.",
+                status.executable,
+            )
+        else:
+            logger.info(
+                "Pi backend ready: %s (agent dir %s)",
+                status.version or "unknown version",
+                status.agent_dir,
+            )
 
     async def stop(self) -> None:
         self._by_task.clear()
@@ -145,13 +152,10 @@ class PiCodingAgentAdapter:
         self._started = False
 
     async def health(self) -> dict[str, Any]:
-        info = await probe_pi_runtime(executable=self._settings.pi_executable)
+        status = await self._runtime.status()
         return {
             "backend": self.name,
-            "available": info.available,
-            "version": info.version,
-            "detail": info.detail,
-            "agent_dir": info.agent_dir,
+            **status.to_dict(),
             "sessions": self._manager.describe(),
         }
 
@@ -204,11 +208,13 @@ class PiCodingAgentAdapter:
             await on_event(
                 AgentEvent(
                     "progress.summary",
-                    f"Pi is running {model.get('id')}",
+                    f"Pi is running {model.get('id')} from Solo's own runtime",
                     {
                         "provider": model.get("provider"),
                         "model": model.get("id"),
                         "session_pid": session.pid,
+                        "agent_dir": str(self._runtime.agent_dir()),
+                        "source": self._runtime.source(),
                     },
                 )
             )
@@ -222,8 +228,6 @@ class PiCodingAgentAdapter:
     async def steer(self, *, task_id: str, instruction: str) -> None:
         session = self._by_task.get(task_id)
         if session is None:
-            # The run may have settled between the request and this call; a
-            # missing session is not an error worth failing the task over.
             logger.info("steer requested for unknown or finished task %s", task_id)
             return
         try:

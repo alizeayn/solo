@@ -49,6 +49,24 @@ export default function PiAgentSettings() {
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const installRuntime = (force: boolean) =>
+    guarded('runtime', async () => {
+      const result = await api.pi.installRuntime(force)
+      setNotice(result.message)
+      await loadStatus()
+    })
+
+  const verifyRuntime = () =>
+    guarded('verify', async () => {
+      const status = await api.pi.verifyRuntime()
+      setNotice(
+        status.verified
+          ? "Solo's Pi Agent started and answered a command."
+          : status.detail || 'The runtime could not be started.',
+      )
+      await loadStatus()
+    })
+
   const loadStatus = useCallback(async () => {
     try {
       const [statusData, providerData] = await Promise.all([
@@ -216,38 +234,65 @@ export default function PiAgentSettings() {
       <section className="settings-section">
         <div className="settings-section__head">
           <h3 className="settings-section__title">Runtime</h3>
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={() => void loadStatus()}
-            disabled={busy === 'status'}
-          >
-            Refresh
-          </button>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={busy !== null}
+              onClick={() => void verifyRuntime()}
+            >
+              {busy === 'verify' ? 'Verifying…' : 'Verify runtime'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={busy !== null}
+              onClick={() => void installRuntime(false)}
+            >
+              {busy === 'runtime' ? 'Installing…' : 'Install / repair'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={busy !== null}
+              onClick={() => void loadStatus()}
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
-        <dl className="detail-grid">
+        <RuntimeCard status={status} onInstall={() => void installRuntime(true)} />
+
+        <dl className="detail-grid" style={{ marginTop: 12 }}>
           <dt>Backend</dt>
           <dd>
-            <span className={`pill ${status?.backend === 'pi' ? 'pill--success' : 'pill--neutral'}`}>
+            <span
+              className={`pill ${status?.backend === 'pi' ? 'pill--success' : 'pill--neutral'}`}
+            >
               {status?.backend === 'pi' ? 'Pi Agent' : 'Simulator'}
             </span>
           </dd>
-          <dt>Pi CLI</dt>
-          <dd>
-            {status?.runtime.available ? (
-              <>
-                {status.runtime.version ?? 'detected'}{' '}
-                <span className="hint mono">{status.runtime.executable}</span>
-              </>
-            ) : (
-              <span className="text-danger">{status?.runtime.detail ?? 'not detected'}</span>
-            )}
+          <dt>Executable</dt>
+          <dd className="mono" style={{ fontSize: 11.5 }}>
+            {status?.runtime.executable ?? '—'}
+          </dd>
+          <dt>Runtime dir</dt>
+          <dd className="mono" style={{ fontSize: 11.5 }}>
+            {status?.runtime_dir ?? '—'}
           </dd>
           <dt>Agent dir</dt>
-          <dd className="mono">{status?.agent_dir ?? '—'}</dd>
+          <dd className="mono" style={{ fontSize: 11.5 }}>
+            {status?.agent_dir ?? '—'}
+          </dd>
           <dt>Credentials</dt>
-          <dd className="mono">{status?.auth_file ?? '—'}</dd>
+          <dd className="mono" style={{ fontSize: 11.5 }}>
+            {status?.auth_file ?? '—'}
+          </dd>
+          <dt>Node</dt>
+          <dd className="mono" style={{ fontSize: 11.5 }}>
+            {status?.runtime.node ?? 'not found'}
+          </dd>
           <dt>Sessions</dt>
           <dd>
             {status?.sessions.length
@@ -260,12 +305,6 @@ export default function PiAgentSettings() {
               : 'none running'}
           </dd>
         </dl>
-
-        {!status?.runtime.available && (
-          <div className="alert alert--error" role="alert" style={{ marginTop: 10 }}>
-            {status?.runtime.detail}
-          </div>
-        )}
       </section>
 
       {/* ---------------- provider + credential ---------------- */}
@@ -517,6 +556,75 @@ export default function PiAgentSettings() {
 
       {error && <div className="alert alert--error">{error}</div>}
       {notice && !error && <div className="alert alert--info">{notice}</div>}
+    </div>
+  )
+}
+
+/** A single-glance answer to "is Solo's own Pi Agent ready?". */
+function RuntimeCard({
+  status,
+  onInstall,
+}: {
+  status: PiStatus | null
+  onInstall: () => void
+}) {
+  if (!status) {
+    return (
+      <div className="runtime-card">
+        <div className="runtime-card__body">
+          <div className="runtime-card__title">Checking Solo's Pi Agent runtime…</div>
+        </div>
+      </div>
+    )
+  }
+
+  const runtime = status.runtime
+  const tone = runtime.verified
+    ? 'runtime-card--ok'
+    : runtime.installed
+      ? 'runtime-card--warn'
+      : 'runtime-card--bad'
+  const title = runtime.verified
+    ? `Solo's Pi Agent ${runtime.version ?? ''} is installed and verified`.trim()
+    : runtime.installed
+      ? `Solo's Pi Agent ${runtime.version ?? ''} is installed`.trim()
+      : "Solo's Pi Agent is not installed"
+
+  const provenance =
+    runtime.source === 'managed'
+      ? 'isolated — this is Solo’s own copy, independent of any Pi on this computer'
+      : runtime.source === 'external'
+        ? 'using an explicitly configured executable, not Solo’s own runtime'
+        : 'not installed'
+
+  return (
+    <div className={`runtime-card ${tone}`} role="status">
+      <div className="runtime-card__body">
+        <div className="runtime-card__title">
+          <span
+            className={`dot ${runtime.verified ? 'dot--on' : runtime.installed ? 'dot--warn' : 'dot--off'}`}
+            aria-hidden="true"
+          />
+          {title}
+        </div>
+        <div className="runtime-card__detail">{provenance}</div>
+        {runtime.detail && runtime.source !== 'managed' && (
+          <div className="runtime-card__detail">{runtime.detail}</div>
+        )}
+        {runtime.last_error && (
+          <div className="runtime-card__detail text-danger">{runtime.last_error}</div>
+        )}
+      </div>
+      {!runtime.installed && (
+        <button type="button" className="btn btn--primary btn--sm" onClick={onInstall}>
+          Install Pi Agent
+        </button>
+      )}
+      {runtime.installed && !runtime.verified && (
+        <button type="button" className="btn btn--sm" onClick={onInstall}>
+          Repair
+        </button>
+      )}
     </div>
   )
 }

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 import { useWorkspace } from '../state/WorkspaceProvider'
 import { clockTime, truncate } from '../utils/format'
+import VoiceOrb from '../components/VoiceOrb'
 
 export default function ConversationPanel() {
   const {
@@ -102,6 +103,7 @@ export default function ConversationPanel() {
       </div>
 
       <div className="panel__footer">
+        <VoiceOrb state="preview" />
         <div className="composer">
           <div className="composer__row">
             <textarea
@@ -134,22 +136,9 @@ export default function ConversationPanel() {
               {target ? ` · Task: ${truncate(target.instruction, 44)}` : ''}
             </span>
             <span className="header__group">
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                disabled
-                title="Live voice conversations are implemented in Phase 4 (ElevenLabs)."
-              >
-                🎙 Voice — Phase 4
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                disabled
-                title="File attachments are implemented in Phase 5."
-              >
-                📎 Attach — Phase 5
-              </button>
+              <span className="context-chip" title="Attach files from the Write panel">
+                📎 Files go through the Write panel
+              </span>
             </span>
           </div>
         </div>

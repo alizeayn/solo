@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import auth as auth_api
+from .api import files as files_api
 from .api import fs as fs_api
 from .api import health as health_api
 from .api import messages as messages_api
@@ -87,6 +88,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         container = await Container.create(settings)
         app.state.container = container
+        # Create Solo's own Pi runtime and agent directories up front, so the
+        # Settings UI can report a truthful status on first load.
+        try:
+            container.pi_runtime.initialize()
+        except OSError:  # pragma: no cover - read-only data dir
+            logger.warning("could not create the Pi runtime directories", exc_info=True)
         # Create the first admin from the installer-provided password, if any.
         await container.auth.bootstrap_admin()
         await container.auth.purge_expired_sessions()
@@ -119,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(settings_api.router)
     app.include_router(projects_api.router)
     app.include_router(fs_api.router)
+    app.include_router(files_api.router)
     app.include_router(tasks_api.router)
     app.include_router(messages_api.router)
     app.include_router(pi_api.router)

@@ -98,6 +98,28 @@ export interface PiRuntime {
   executable: string | null
   agent_dir: string | null
   detail: string | null
+  /** True when Solo's own installation is present and runnable. */
+  installed: boolean
+  /** True only when the runtime was actually started and answered a command. */
+  verified: boolean
+  /** `managed` (Solo's own copy), `external` (an explicit override), `none`. */
+  source: 'managed' | 'external' | 'none'
+  /** True when source === 'managed' — the host's Pi is not involved. */
+  isolated: boolean
+  node: string | null
+  runtime_dir: string | null
+  installed_at: string | null
+  last_error: string | null
+}
+
+export interface PiInstallResult {
+  ok: boolean
+  message: string
+  detail: string | null
+  version: string | null
+  duration_ms: number
+  output: string | null
+  runtime: PiRuntime | null
 }
 
 export interface PiStatus {
@@ -111,6 +133,8 @@ export interface PiStatus {
   minimal_harness: boolean
   agent_dir: string | null
   auth_file: string | null
+  runtime_dir: string | null
+  node: string | null
   configured_providers: string[]
   sessions: PiSession[]
 }
@@ -365,6 +389,22 @@ export interface ProjectSummary {
   task_status_counts: Record<string, number>
   tree_generated_at: string | null
   config: ProjectConfig
+}
+
+/** A text file inside a project, as returned by the file endpoints. */
+export interface FileContent {
+  path: string
+  content: string
+  size: number
+  truncated: boolean
+  /** True when the file is not valid UTF-8 text; `content` is then empty. */
+  binary: boolean
+}
+
+export interface FileLimits {
+  max_read_bytes: number
+  max_write_bytes: number
+  max_upload_bytes: number
 }
 
 export interface FsEntry {

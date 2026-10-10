@@ -174,13 +174,13 @@ async def test_missing_executable_is_reported(fake_pi, tmp_path):
     from app.adapters.pi_rpc import PiUnavailableError
 
     client = PiRpcClient(["/nonexistent/pi-binary"], cwd=str(tmp_path))
-    with pytest.raises(PiUnavailableError, match="not found on PATH"):
+    with pytest.raises(PiUnavailableError, match="was not found"):
         await client.start()
 
 
 def test_build_pi_argv_reflects_configuration():
     argv = build_pi_argv(
-        "pi",
+        ["/opt/node", "/opt/pi/cli.js"],
         PiLaunchConfig(
             provider="openrouter",
             model="vendor/model",
@@ -189,7 +189,8 @@ def test_build_pi_argv_reflects_configuration():
             minimal_harness=True,
         ),
     )
-    assert argv[0] == "pi"
+    # The runtime prefix is an absolute interpreter + script, never a bare "pi".
+    assert argv[:2] == ["/opt/node", "/opt/pi/cli.js"]
     assert "--mode" in argv and "rpc" in argv
     assert "--no-session" in argv
     # Trust is explicit so behaviour never depends on a saved decision.
@@ -201,7 +202,7 @@ def test_build_pi_argv_reflects_configuration():
 
 
 def test_build_pi_argv_defaults_to_no_approve_and_minimal_harness():
-    argv = build_pi_argv("pi", PiLaunchConfig())
+    argv = build_pi_argv(["/opt/node", "/opt/pi/cli.js"], PiLaunchConfig())
     assert "--no-approve" in argv
     assert "--no-extensions" in argv
     assert "--no-skills" in argv
@@ -485,7 +486,9 @@ async def test_adapter_health_reports_a_fake_runtime(fake_pi, tmp_path):
     adapter = PiCodingAgentAdapter(settings)
     health = await adapter.health()
     assert health["backend"] == "pi"
-    # The fake is not real Pi, so `--version` is unsupported; the adapter must
-    # still report a coherent status rather than raising.
-    assert "available" in health
+    # `--version` is unsupported by the fake, so the adapter must still report a
+    # coherent status rather than raising.
+    assert "installed" in health
+    assert "isolated" in health
+    assert health["agent_dir"].endswith("pi/agent")
     await adapter.stop()

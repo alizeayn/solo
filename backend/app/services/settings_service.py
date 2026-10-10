@@ -255,7 +255,7 @@ class SettingsService:
         )
 
     async def test_pi(self) -> ConnectionTestResult:
-        info = await probe_pi_runtime()
+        info = await probe_pi_runtime(self._settings)
         if not info.available:
             return ConnectionTestResult(ok=False, message=info.detail)
         return ConnectionTestResult(
@@ -271,6 +271,6 @@ class SettingsService:
         now = time.monotonic()
         if not refresh and self._pi_cache and now - self._pi_cache[0] < _PI_CACHE_TTL:
             return self._pi_cache[1]
-        info = await probe_pi_runtime()
+        info = await probe_pi_runtime(self._settings)
         self._pi_cache = (now, info)
         return info

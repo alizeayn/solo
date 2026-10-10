@@ -14,6 +14,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .version import read_version
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables / ``.env``."""
@@ -29,7 +31,7 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", description="development|production")
     app_host: str = "0.0.0.0"
     app_port: int = 8080
-    app_version: str = "0.1.0"
+    app_version: str = Field(default_factory=read_version)
     log_level: str = "INFO"
 
     # Coding-agent backend: "auto" (Pi when installed, otherwise the
@@ -39,14 +41,16 @@ class Settings(BaseSettings):
     mock_step_delay: float = 0.35
 
     # --- Pi Agent ---
-    pi_executable: str = "pi"
-    # Optional override for Pi's agent directory (PI_CODING_AGENT_DIR). Leave
-    # empty to reuse the user's existing Pi installation, which also preserves
-    # their model catalog. A fresh directory has NO models (verified), so only
-    # set this if you intend to run 'pi update --models' against it.
+    # Solo installs and owns its own Pi Agent. The executable is never resolved
+    # through PATH, so the host's Pi installation can never be used by accident.
+    pi_executable: str | None = None
+    #: npm prefix for Solo's own Pi installation. Defaults to <data>/pi-runtime.
+    pi_runtime_dir: str | None = None
+    #: Pi's configuration directory. Defaults to <data>/pi/agent, which keeps
+    #: credentials and the model catalog separate from ~/.pi/agent.
     pi_agent_dir: str | None = None
-    # Trust project-local Pi resources (.pi/settings.json, extensions, skills).
-    # False maps to --no-approve: predictable and safe for a non-interactive run.
+    #: Trust project-local Pi resources (.pi/settings.json, extensions, skills).
+    #: False maps to --no-approve: predictable and safe for a non-interactive run.
     pi_approve_project: bool = False
     # Disable extensions/skills/templates/MCP so the harness is reproducible and
     # produces no unanswerable extension UI requests.

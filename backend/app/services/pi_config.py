@@ -23,7 +23,6 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -34,6 +33,7 @@ from ..config import Settings
 from ..adapters.pi_agent import PiRuntimeInfo, probe_pi_runtime
 from ..adapters.pi_events import provider_error_text
 from ..adapters.pi_rpc import PiRpcClient, PiRpcError, PiUnavailableError, PiTimeoutError
+from .pi_runtime import PiRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -176,34 +176,43 @@ class ProviderStatus:
 class PiConfigService:
     """Reads and writes Pi's configuration through Pi's own interfaces."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, runtime: PiRuntime | None = None) -> None:
         self._settings = settings
+        self._runtime = runtime or PiRuntime(settings)
         self._model_cache: tuple[float, list[ModelInfo]] | None = None
         self._model_cache_ttl = 120.0
 
     # ------------------------------------------------------------------ #
     # Paths
     # ------------------------------------------------------------------ #
+    @property
+    def runtime_manager(self) -> PiRuntime:
+        return self._runtime
+
     def agent_dir(self) -> Path:
-        """Pi's agent directory (``PI_CODING_AGENT_DIR`` or ``~/.pi/agent``)."""
-        override = (self._settings.pi_agent_dir or "").strip()
-        if override:
-            return Path(override).expanduser()
-        return Path(
-            os.environ.get("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent"))
-        ).expanduser()
+        """Solo's own Pi configuration directory — never ``~/.pi/agent``."""
+        return self._runtime.agent_dir()
 
     def auth_file(self) -> Path:
-        return self.agent_dir() / "auth.json"
+        return self._runtime.layout().auth_file
 
     def settings_file(self) -> Path:
-        return self.agent_dir() / "settings.json"
+        return self._runtime.layout().settings_file
 
     def executable(self) -> str | None:
-        return shutil.which(self._settings.pi_executable)
+        """The executable Solo will invoke, or ``None`` when unavailable."""
+        argv = self._runtime.resolve_argv()
+        return argv[-1] if argv else None
 
-    async def runtime(self) -> PiRuntimeInfo:
-        return await probe_pi_runtime(executable=self._settings.pi_executable)
+    def executable_argv(self) -> list[str] | None:
+        """Full argv prefix for Solo's isolated runtime."""
+        return self._runtime.resolve_argv()
+
+    def runtime_env(self) -> dict[str, str]:
+        return self._runtime.env()
+
+    async def runtime(self, *, verify: bool = False) -> PiRuntimeInfo:
+        return await probe_pi_runtime(self._settings, verify=verify)
 
     # ------------------------------------------------------------------ #
     # auth.json (never exposes values)
@@ -296,17 +305,12 @@ class PiConfigService:
     async def _run_cli(
         self, args: list[str], *, timeout: float
     ) -> tuple[int, str, str]:
-        executable = self.executable()
-        if executable is None:
-            raise PiUnavailableError(
-                "the 'pi' executable was not found on PATH"
-            )
-        env = dict(os.environ)
-        env["PI_SKIP_VERSION_CHECK"] = "1"
-        if self._settings.pi_agent_dir:
-            env["PI_CODING_AGENT_DIR"] = str(self.agent_dir())
+        argv_prefix = self.executable_argv()
+        if argv_prefix is None:
+            raise PiUnavailableError(self._unavailable_detail())
+        env = {**os.environ, **self._runtime.env()}
         process = await asyncio.create_subprocess_exec(
-            executable,
+            *argv_prefix,
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -324,8 +328,11 @@ class PiConfigService:
         )
 
     def _probe_argv(self) -> list[str]:
+        argv_prefix = self.executable_argv()
+        if argv_prefix is None:
+            raise PiUnavailableError(self._unavailable_detail())
         return [
-            self._settings.pi_executable,
+            *argv_prefix,
             "--mode",
             "rpc",
             "--no-session",
@@ -337,19 +344,23 @@ class PiConfigService:
             "--no-context-files",
         ]
 
+    def _unavailable_detail(self) -> str:
+        layout = self._runtime.layout()
+        return (
+            "Solo's isolated Pi Agent runtime is not available. Install it from "
+            f"Settings → Pi Agent, or run './solo.sh install'. Expected at {layout.runtime_dir}."
+        )
+
     async def _rpc_probe(
         self, command: dict[str, Any], *, timeout: float = PROBE_TIMEOUT
     ) -> dict[str, Any]:
-        """Run one RPC command in a short-lived Pi process."""
+        """Run one RPC command in a short-lived instance of Solo's runtime."""
         probe_dir = self._settings.app_data_dir / "pi" / "probe"
         probe_dir.mkdir(parents=True, exist_ok=True)
-        env: dict[str, str] = {"PI_SKIP_VERSION_CHECK": "1"}
-        if self._settings.pi_agent_dir:
-            env["PI_CODING_AGENT_DIR"] = str(self.agent_dir())
         client = PiRpcClient(
             self._probe_argv(),
             cwd=str(probe_dir),
-            env=env,
+            env=self._runtime.env(),
             label="pi-probe",
         )
         await client.start()
@@ -438,6 +449,10 @@ class PiConfigService:
             wanted = provider.strip().lower()
             models = [m for m in models if m.provider.lower() == wanted]
         return models[:MAX_MODELS]
+
+    def invalidate_model_cache(self) -> None:
+        """Drop the cached catalog so the next read re-queries Pi."""
+        self._model_cache = None
 
     async def refresh_catalog(self) -> dict[str, Any]:
         """Run ``pi update --models`` and invalidate the cache."""
@@ -588,9 +603,6 @@ class PiConfigService:
         """One minimal real generation, used to prove credentials work."""
         probe_dir = self._settings.app_data_dir / "pi" / "probe"
         probe_dir.mkdir(parents=True, exist_ok=True)
-        env: dict[str, str] = {"PI_SKIP_VERSION_CHECK": "1"}
-        if self._settings.pi_agent_dir:
-            env["PI_CODING_AGENT_DIR"] = str(self.agent_dir())
 
         argv = self._probe_argv() + ["--provider", provider, "--model", model]
         errors: list[str] = []
@@ -610,7 +622,11 @@ class PiConfigService:
                     errors.append(provider_error_text(message))
 
         client = PiRpcClient(
-            argv, cwd=str(probe_dir), env=env, on_event=on_record, label="pi-validate"
+            argv,
+            cwd=str(probe_dir),
+            env=self._runtime.env(),
+            on_event=on_record,
+            label="pi-validate",
         )
         try:
             await client.start()

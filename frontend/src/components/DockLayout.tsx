@@ -19,12 +19,14 @@ import {
 import ActivityPanel from '../panels/ActivityPanel'
 import ConversationPanel from '../panels/ConversationPanel'
 import InspectorPanel from '../panels/InspectorPanel'
+import WritePanel from '../panels/WritePanel'
 
 const LAYOUT_STORAGE_KEY = 'solo.layout.v1'
 
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   conversation: ConversationPanel,
   activity: ActivityPanel,
+  write: WritePanel,
   inspector: InspectorPanel,
 }
 
@@ -66,10 +68,16 @@ function addDefaultLayout(api: DockviewApi) {
     position: { referencePanel: conversation.id, direction: 'right' },
   })
   api.addPanel({
+    id: 'write',
+    component: 'write',
+    title: 'Write',
+    position: { referencePanel: conversation.id, direction: 'below' },
+  })
+  api.addPanel({
     id: 'inspector',
     component: 'inspector',
     title: 'Inspector',
-    position: { referencePanel: conversation.id, direction: 'below' },
+    position: { referencePanel: 'write', direction: 'within' },
   })
 }
 

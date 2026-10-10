@@ -46,9 +46,10 @@ RUN apt-get update \
     && if [ "$INSTALL_PI" = "true" ]; then \
          curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
          && apt-get install -y --no-install-recommends nodejs \
-         && npm install -g --no-audit --no-fund @earendil-works/pi-coding-agent \
+         && npm install --prefix /opt/solo-pi-runtime --no-audit --no-fund \
+              @earendil-works/pi-coding-agent@1.1.0 \
          && npm cache clean --force \
-         && pi --version; \
+         && node /opt/solo-pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --version; \
        fi \
     && apt-get purge -y gnupg \
     && apt-get autoremove -y \
@@ -62,13 +63,16 @@ COPY --from=frontend-build /build/frontend/dist ./frontend/dist
 
 # Run as a non-root user; /data is the single persistent volume.
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin solo \
-    && mkdir -p /data \
-    && chown -R solo:solo /app /data
+    && mkdir -p /data /data/pi/agent \
+    && chown -R solo:solo /app /data /opt/solo-pi-runtime
 USER solo
 
-# Pi stores its agent directory under HOME; make sure it exists and is writable.
-ENV PI_CODING_AGENT_DIR=/data/pi
-RUN mkdir -p /data/pi && chown -R solo:solo /data
+# The Pi Agent *runtime* is baked into the image (code, reproducible, pinned);
+# its *configuration* lives in the volume so credentials and the model catalog
+# survive a container rebuild. `PI_CODING_AGENT_DIR` is what Pi reads;
+# `PI_RUNTIME_DIR` is where Solo looks for its own installation.
+ENV PI_RUNTIME_DIR=/opt/solo-pi-runtime \
+    PI_AGENT_DIR=/data/pi/agent
 
 WORKDIR /app/backend
 

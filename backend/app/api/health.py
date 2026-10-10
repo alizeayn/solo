@@ -32,9 +32,11 @@ async def health(container: ContainerDep) -> HealthOut:
     workspaces_ok = container.settings.workspaces_dir.is_dir()
 
     pi_version: str | None = None
+    pi_isolated = False
     try:
-        info = await probe_pi_runtime()
+        info = await probe_pi_runtime(container.settings)
         pi_version = info.version if info.available else None
+        pi_isolated = info.source == "managed"
     except Exception:  # noqa: BLE001 - probing must never break health
         logger.warning("pi runtime probe failed", exc_info=True)
 
@@ -45,4 +47,6 @@ async def health(container: ContainerDep) -> HealthOut:
         workspaces_dir=workspaces_ok,
         coding_agent=container.adapter_name,
         pi_version=pi_version,
+        pi_isolated=pi_isolated,
+        schema_version=int(container.migration_report.get("to") or 0),
     )

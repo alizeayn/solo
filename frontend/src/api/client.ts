@@ -8,6 +8,10 @@
 
 import type {
   AppEvent,
+  FileContent,
+  FileLimits,
+  PiInstallResult,
+  PiRuntime,
   AppSettings,
   AuthStatus,
   CheckResult,
@@ -182,6 +186,15 @@ export const api = {
 
   pi: {
     status: () => request<PiStatus>('/api/pi/status'),
+    runtime: (verify = false) =>
+      request<PiRuntime>(`/api/pi/runtime${verify ? '?verify=true' : ''}`),
+    installRuntime: (force = false) =>
+      request<PiInstallResult>(
+        `/api/pi/runtime/install?verify=true${force ? '&force=true' : ''}`,
+        { method: 'POST' },
+      ),
+    verifyRuntime: () =>
+      request<PiRuntime>('/api/pi/runtime/verify', { method: 'POST' }),
     providers: () => request<PiProvider[]>('/api/pi/providers'),
     models: (provider?: string, refresh = false) => {
       const params = new URLSearchParams()
@@ -275,6 +288,30 @@ export const api = {
         `/api/projects/${projectId}/orchestration/advance`,
         { method: 'POST' },
       ),
+  },
+
+  files: {
+    limits: (projectId: string) =>
+      request<FileLimits>(`/api/projects/${projectId}/files/limits`),
+    read: (projectId: string, path: string) =>
+      request<FileContent>(
+        `/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`,
+      ),
+    write: (projectId: string, path: string, content: string, overwrite = true) =>
+      request<FileContent>(`/api/projects/${projectId}/files`, {
+        method: 'PUT',
+        body: JSON.stringify({ path, content, overwrite }),
+      }),
+    upload: (projectId: string, file: File, directory = '', overwrite = true) => {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('directory', directory)
+      form.append('overwrite', String(overwrite))
+      return request<FileContent>(`/api/projects/${projectId}/files/upload`, {
+        method: 'POST',
+        body: form,
+      })
+    },
   },
 
   checks: {

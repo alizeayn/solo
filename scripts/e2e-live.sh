@@ -41,6 +41,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+step "Installing Solo's isolated Pi Agent runtime (what Easy Installation does)"
+# Deliberately done here, in the test's own data directory: it verifies both the
+# installer and the isolation, and it proves the runtime is per-installation
+# rather than borrowed from the host.
+if (
+  cd "$ROOT"
+  PYTHONPATH="$ROOT/backend" APP_DATA_DIR="$DATA" "$ROOT/venv/bin/python" -m app.pi_install --verify
+); then
+  pass "Solo's own Pi Agent runtime installed and verified"
+else
+  fail "Solo's runtime could not be installed or verified"
+  echo "  (continuing so the remaining checks can report their state)"
+fi
+if command -v pi >/dev/null 2>&1; then
+  echo "  note: a global pi exists at $(command -v pi); Solo must not use it"
+else
+  pass "no global pi on PATH — this run proves independence from it"
+fi
+
 step "Starting Solo with the real Pi backend"
 (
   cd "$ROOT" || exit 1
@@ -54,7 +73,8 @@ for _ in $(seq 1 120); do curl -fsS "$B/api/health" >/dev/null 2>&1 && break; sl
 
 HEALTH=$(curl -fsS "$B/api/health")
 [[ "$(echo "$HEALTH" | j "['coding_agent']")" == "pi" ]] && pass "backend is pi" || fail "backend is not pi"
-[[ -n "$(echo "$HEALTH" | j "['pi_version']")" ]] && pass "Pi version: $(echo "$HEALTH" | j "['pi_version']")" || fail "Pi not detected"
+[[ "$(echo "$HEALTH" | j "['pi_isolated']")" == "True" ]] && pass "health reports an isolated Pi runtime" || fail "health does not report isolation"
+[[ -n "$(echo "$HEALTH" | j "['pi_version']")" ]] && pass "Pi version: $(echo "$HEALTH" | j "['pi_version']")" || fail "Pi version not detected"
 
 step "Sign in"
 curl -fsS -c "$C" -b "$C" -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
@@ -63,15 +83,77 @@ curl -fsS -c "$C" -b "$C" -X POST "$B/api/auth/login" -H 'Content-Type: applicat
 PROVIDER="${PI_TEST_PROVIDER:-opencode-go}"
 MODEL="${PI_TEST_MODEL:-claude-haiku-5-5}"
 
-step "Pre-flight: Pi and a usable credential"
-if ! command -v "${PI_EXECUTABLE:-pi}" >/dev/null 2>&1; then
-  echo "  Pi is not installed; skipping the live test."
+step "Pre-flight: Solo's own Pi runtime and a usable credential"
+# Deliberately does NOT check PATH: Solo uses its own isolated runtime, and the
+# whole point of this test is that a global `pi` is irrelevant.
+PI_STATUS=$(curl -fsS -b "$C" "$B/api/pi/status")
+if [[ "$(echo "$PI_STATUS" | j "['runtime']['installed']")" != "True" ]]; then
+  echo "  Solo's isolated Pi runtime is not installed; skipping the live test."
+  echo "  Install it with: ./solo.sh install"
   trap - EXIT; cleanup; exit 0
 fi
-if [[ "$(curl -fsS -b "$C" "$B/api/pi/status" | j "['runtime']['available']")" != "True" ]]; then
-  echo "  Pi is not available to Solo; skipping the live test."
-  trap - EXIT; cleanup; exit 0
+pass "Solo's runtime: $(echo "$PI_STATUS" | j "['runtime']['source']") v$(echo "$PI_STATUS" | j "['runtime']['version']")"
+[[ "$(echo "$PI_STATUS" | j "['runtime']['isolated']")" == "True" ]] && pass "runtime is isolated (source=managed)" || fail "runtime is not isolated"
+# The runtime must live inside this installation's own data directory: the
+# definitive check that Solo is not using a host installation.
+RUNTIME_DIR="$(echo "$PI_STATUS" | j "['runtime']['runtime_dir']")"
+AGENT_DIR="$(echo "$PI_STATUS" | j "['runtime']['agent_dir']")"
+case "$RUNTIME_DIR" in "$DATA"/*) pass "runtime lives inside this installation";; *) fail "runtime is outside the installation: $RUNTIME_DIR";; esac
+case "$AGENT_DIR" in "$DATA"/*) pass "Pi configuration is isolated from the desktop installation";; *) fail "Pi configuration is not isolated: $AGENT_DIR";; esac
+case "$RUNTIME_DIR" in "$ROOT"/*) fail "runtime is inside the source checkout";; *) pass "runtime is outside the source checkout";; esac
+case "$AGENT_DIR" in "$HOME/.pi"*) fail "Pi configuration points at ~/.pi";; *) pass "Pi configuration is not ~/.pi/agent";; esac
+if command -v pi >/dev/null 2>&1; then
+  echo "  note: a global pi exists at $(command -v pi); Solo must not use it"
 fi
+
+step "Give Solo its own credential, through Solo's own API"
+# Solo's Pi configuration is isolated, so by design it does NOT see the host's
+# ~/.pi/agent/auth.json. A credential must therefore be provided the way a user
+# would: through the Settings API, into Solo's own store. Seeding it from the
+# machine's existing Pi credential (when one exists) keeps the test runnable
+# without pasting a key, and still lands in Solo's directory only.
+CREDENTIAL="${PI_TEST_API_KEY:-}"
+if [[ -n "$CREDENTIAL" ]]; then
+  pass "using PI_TEST_API_KEY from the environment"
+elif [[ -f "$HOME/.pi/agent/auth.json" ]]; then
+  CREDENTIAL="$(python3 -c '
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit
+entry = data.get(sys.argv[2]) or {}
+key = entry.get("key") if isinstance(entry, dict) else None
+print(key if isinstance(key, str) else "")
+' "$HOME/.pi/agent/auth.json" "$PROVIDER")"
+  [[ -n "$CREDENTIAL" ]] && pass "found a $PROVIDER credential on this machine to seed Solo's own store"
+fi
+
+if [[ -z "$CREDENTIAL" ]]; then
+  echo "  No credential is available for $PROVIDER, and Solo deliberately does"
+  echo "  not read the host Pi configuration, so the coding task cannot run."
+  echo "  Set PI_TEST_API_KEY=<key> and re-run to include it."
+  echo
+  echo "──────────────────────────────────────────────────────────────"
+  printf ' Isolation result: \033[1;32m%d passed\033[0m, ' "$PASSED"
+  printf '\033[1;33m%d not run\033[0m (no credential)\n' "$FAILED"
+  echo "──────────────────────────────────────────────────────────────"
+  trap - EXIT
+  cleanup
+  exit 0
+fi
+
+CRED_RESPONSE=$(curl -fsS -b "$C" -X PUT "$B/api/pi/providers/$PROVIDER/credential" \
+  -H 'Content-Type: application/json' \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"api_key":sys.argv[1]}))' "$CREDENTIAL")")
+[[ "$(echo "$CRED_RESPONSE" | j "['ready']")" == "True" ]] \
+  && pass "Solo accepted the credential into its own Pi configuration" \
+  || fail "Solo rejected the credential: $CRED_RESPONSE"
+[[ -f "$AGENT_DIR/auth.json" ]] && pass "credential stored in Solo's agent directory" || fail "no auth.json in Solo's agent directory"
+cmp -s "$AGENT_DIR/auth.json" "$HOME/.pi/agent/auth.json" \
+  && fail "Solo's credential file is the host's file" \
+  || pass "Solo's credential file is separate from the host's"
+unset CREDENTIAL CRED_RESPONSE
 
 step "Configure Pi provider and model from Settings"
 PROVIDERS=$(curl -fsS -b "$C" "$B/api/pi/providers")
@@ -83,7 +165,9 @@ STATUS=$(curl -fsS -b "$C" "$B/api/pi/status")
 [[ "$(echo "$STATUS" | j "['provider']")" == "$PROVIDER" ]] && pass "provider saved ($PROVIDER)" || fail "provider not saved"
 [[ "$(echo "$STATUS" | j "['model']")" == "$MODEL" ]] && pass "model saved ($MODEL)" || fail "model not saved"
 
-step "Discover models through Pi"
+step "Discover models through Pi's own catalog"
+# Solo's catalog was empty until the credential above was saved: the bundled
+# provider catalogs are resolved from Solo's own credentials.
 MODELS=$(curl -fsS -b "$C" "$B/api/pi/models?provider=$PROVIDER")
 COUNT=$(echo "$MODELS" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))")
 [[ "$COUNT" -gt 0 ]] && pass "$COUNT models discovered for $PROVIDER" || fail "no models discovered"

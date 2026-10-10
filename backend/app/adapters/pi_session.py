@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -76,9 +75,14 @@ class PiLaunchConfig:
         )
 
 
-def build_pi_argv(executable: str, config: PiLaunchConfig) -> list[str]:
-    """Build the `pi` command line for *config*."""
-    argv = [executable, "--mode", "rpc"]
+def build_pi_argv(exec_prefix: list[str], config: PiLaunchConfig) -> list[str]:
+    """Build the `pi` command line for *config*.
+
+    ``exec_prefix`` comes from Solo's isolated runtime: an absolute Node binary
+    followed by the CLI script, or an explicitly configured executable. A bare
+    ``pi`` is never used.
+    """
+    argv = [*exec_prefix, "--mode", "rpc"]
     if config.ephemeral_session:
         argv.append("--no-session")
     argv.append("--approve" if config.approve_project else "--no-approve")
@@ -113,13 +117,13 @@ class PiSession:
         *,
         cwd: str,
         config: PiLaunchConfig,
-        executable: str = "pi",
+        argv_prefix: list[str],
         env: dict[str, str] | None = None,
         run_timeout: float = DEFAULT_RUN_TIMEOUT,
     ) -> None:
         self.cwd = cwd
         self.config = config
-        self._executable = executable
+        self._argv_prefix = list(argv_prefix)
         self._env = dict(env or {})
         self._run_timeout = run_timeout
         self._client: PiRpcClient | None = None
@@ -131,6 +135,25 @@ class PiSession:
     # ------------------------------------------------------------------ #
     # Introspection
     # ------------------------------------------------------------------ #
+    @property
+    def argv_prefix(self) -> list[str]:
+        return list(self._argv_prefix)
+
+    @property
+    def launched_argv(self) -> list[str]:
+        return list(self._applied_argv or [])
+
+    def update_runtime(self, argv_prefix: list[str], env: dict[str, str]) -> bool:
+        """Adopt a new runtime. Returns True when it changed.
+
+        Called before every run, so reinstalling or reconfiguring Solo's Pi
+        installation takes effect without restarting the application.
+        """
+        changed = list(argv_prefix) != self._argv_prefix or dict(env) != self._env
+        self._argv_prefix = list(argv_prefix)
+        self._env = dict(env)
+        return changed
+
     @property
     def running(self) -> bool:
         return self._client is not None and self._client.alive
@@ -152,6 +175,8 @@ class PiSession:
             "provider": self.config.provider,
             "model": self.config.model,
             "uptime": round(self._client.uptime, 1) if self._client else 0.0,
+            "executable": self._argv_prefix[-1] if self._argv_prefix else None,
+            "isolated": bool(self._argv_prefix),
             "last_stderr": self._client.stderr_tail(400) if self._client else "",
         }
 
@@ -159,14 +184,21 @@ class PiSession:
     # Lifecycle
     # ------------------------------------------------------------------ #
     async def ensure_started(self) -> None:
-        """Start the process if needed, restarting it when the config changed."""
+        """Start the process if needed, restarting it when anything changed."""
+        signature = (self.config.signature(), tuple(self._argv_prefix))
         if self._client is not None and self._client.alive:
-            if self._applied_signature == self.config.signature():
+            if self._applied_signature == signature:
                 return
             logger.info("Pi configuration changed; restarting session in %s", self.cwd)
             await self.stop()
 
-        argv = build_pi_argv(self._executable, self.config)
+        if not self._argv_prefix:
+            raise PiUnavailableError(
+                "Solo's Pi Agent runtime is not available. Install it from Settings "
+                "or run './solo.sh install'."
+            )
+
+        argv = build_pi_argv(self._argv_prefix, self.config)
         client = PiRpcClient(
             argv,
             cwd=self.cwd,
@@ -174,7 +206,7 @@ class PiSession:
             on_event=self._on_record,
             label=f"pi[{self.cwd}]",
         )
-        await client.start()  # raises PiUnavailableError when `pi` is missing
+        await client.start()  # raises PiUnavailableError when unusable
 
         try:
             state = await client.call({"type": "get_state"}, timeout=STARTUP_TIMEOUT)
@@ -183,14 +215,15 @@ class PiSession:
             raise PiUnavailableError(f"Pi did not become ready: {exc}") from exc
 
         self._client = client
-        self._applied_signature = self.config.signature()
+        self._applied_signature = signature
         self._applied_argv = argv
         model = (state or {}).get("model") or {}
         logger.info(
-            "Pi session ready in %s (provider=%s model=%s)",
+            "Pi session ready in %s (provider=%s model=%s isolated=%s)",
             self.cwd,
             model.get("provider"),
             model.get("id"),
+            bool(self._env.get("PI_CODING_AGENT_DIR")),
         )
 
     async def stop(self) -> None:
@@ -378,39 +411,52 @@ class PiSession:
 
 
 class PiSessionManager:
-    """Owns the per-project Pi sessions."""
+    """Owns the per-project Pi sessions and the isolated runtime they use."""
 
     def __init__(
         self,
+        runtime: Any,
         *,
-        executable: str = "pi",
-        env: dict[str, str] | None = None,
         run_timeout: float = DEFAULT_RUN_TIMEOUT,
     ) -> None:
-        self._executable = executable
-        self._env = dict(env or {})
+        self._runtime = runtime
         self._run_timeout = run_timeout
         self._sessions: dict[str, PiSession] = {}
         self._lock = asyncio.Lock()
 
     @property
+    def runtime(self) -> Any:
+        return self._runtime
+
+    @property
     def executable_available(self) -> bool:
-        return shutil.which(self._executable) is not None
+        return self._runtime is not None and self._runtime.resolve_argv() is not None
 
     async def session_for(self, cwd: str, config: PiLaunchConfig) -> PiSession:
+        argv_prefix = self._runtime.resolve_argv() if self._runtime else None
+        env = self._runtime.env() if self._runtime else {}
+        if argv_prefix is None:
+            raise PiUnavailableError(
+                "Solo's isolated Pi Agent runtime is not installed. Install it from "
+                "Settings → Pi Agent, or run './solo.sh install'."
+            )
+
         async with self._lock:
             session = self._sessions.get(cwd)
             if session is None:
                 session = PiSession(
                     cwd=cwd,
                     config=config,
-                    executable=self._executable,
-                    env=self._env,
+                    argv_prefix=argv_prefix,
+                    env=env,
                     run_timeout=self._run_timeout,
                 )
                 self._sessions[cwd] = session
             else:
                 session.config = config
+                # A reinstall or a credential change must take effect on the next
+                # run, so the runtime is re-read every time.
+                session.update_runtime(argv_prefix, env)
             return session
 
     def peek(self, cwd: str) -> PiSession | None:

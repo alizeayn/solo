@@ -13,7 +13,6 @@ so a fresh install works with or without Pi.
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Awaitable, Callable
 
 from ..config import Settings
@@ -40,10 +39,16 @@ PiConfigLoader = Callable[[], Awaitable[PiLaunchConfig]]
 
 
 def resolve_backend(settings: Settings, backend: str | None = None) -> str:
-    """Resolve a backend name, expanding ``auto``."""
+    """Resolve a backend name, expanding ``auto``.
+
+    ``auto`` selects Pi only when **Solo's own isolated runtime** is installed —
+    never because a ``pi`` happens to be on PATH.
+    """
     chosen = (backend or settings.agent_backend or "auto").strip().lower()
     if chosen == "auto":
-        return "pi" if shutil.which(settings.pi_executable) else "mock"
+        from ..services.pi_runtime import PiRuntime
+
+        return "pi" if PiRuntime(settings).is_installed() else "mock"
     return chosen
 
 
@@ -52,6 +57,7 @@ def build_adapter(
     *,
     backend: str | None = None,
     pi_config_loader: PiConfigLoader | None = None,
+    pi_runtime: object | None = None,
 ) -> CodingAgentAdapter:
     """Return the configured coding-agent adapter."""
     chosen = resolve_backend(settings, backend)
@@ -60,11 +66,13 @@ def build_adapter(
         return MockCodingAgentAdapter(step_delay=settings.mock_step_delay)
 
     if chosen == "pi":
+        from ..services.pi_runtime import PiRuntime
         from .pi_agent import PiCodingAgentAdapter
 
         return PiCodingAgentAdapter(
             settings,
             config_loader=pi_config_loader,
+            runtime=pi_runtime if isinstance(pi_runtime, PiRuntime) else None,
             run_timeout=float(settings.pi_run_timeout_seconds),
         )
 

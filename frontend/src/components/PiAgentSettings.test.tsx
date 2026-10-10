@@ -20,6 +20,9 @@ vi.mock('../api/client', () => ({
   api: {
     pi: {
       status: vi.fn(),
+      runtime: vi.fn(),
+      installRuntime: vi.fn(),
+      verifyRuntime: vi.fn(),
       providers: vi.fn(),
       models: vi.fn(),
       refreshModels: vi.fn(),
@@ -41,10 +44,18 @@ const pi = api.pi
 const STATUS = {
   runtime: {
     available: true,
+    installed: true,
+    verified: true,
+    source: 'managed',
+    isolated: true,
     version: '1.1.0',
-    executable: '/usr/bin/pi',
-    agent_dir: '/home/u/.pi/agent',
-    detail: 'Pi CLI 1.1.0 detected',
+    executable: '/solo/data/pi-runtime/node_modules/.bin/pi',
+    agent_dir: '/solo/data/pi/agent',
+    node: '/usr/bin/node',
+    runtime_dir: '/solo/data/pi-runtime',
+    installed_at: '2026-10-10T12:00:00Z',
+    last_error: null,
+    detail: "Solo's isolated Pi Agent is installed",
   },
   backend: 'pi',
   provider: null,
@@ -52,8 +63,10 @@ const STATUS = {
   thinking_level: null,
   approve_project: false,
   minimal_harness: true,
-  agent_dir: '/home/u/.pi/agent',
-  auth_file: '/home/u/.pi/agent/auth.json',
+  agent_dir: '/solo/data/pi/agent',
+  auth_file: '/solo/data/pi/agent/auth.json',
+  runtime_dir: '/solo/data/pi-runtime',
+  node: '/usr/bin/node',
   configured_providers: [],
   sessions: [],
 }
@@ -128,22 +141,70 @@ describe('PiAgentSettings', () => {
     mocks.refreshSettings.mockReset().mockResolvedValue(undefined)
   })
 
-  it('shows the detected Pi runtime', async () => {
+  it('shows the detected runtime and states that it is isolated', async () => {
     render(<PiAgentSettings />)
-    expect(await screen.findByText('1.1.0')).toBeInTheDocument()
+    expect(
+      await screen.findByText(/installed and verified/i),
+    ).toBeInTheDocument()
     expect(screen.getByText('Pi Agent')).toBeInTheDocument()
-    expect(screen.getByText('/home/u/.pi/agent')).toBeInTheDocument()
+    // The provenance line is the point of the card: Solo's own copy.
+    expect(screen.getByText(/Solo’s own copy, independent/i)).toBeInTheDocument()
+    expect(screen.getByText('/solo/data/pi/agent')).toBeInTheDocument()
   })
 
-  it('warns when Pi is not installed', async () => {
+  it('offers to install the runtime when it is missing', async () => {
     vi.mocked(pi.status).mockResolvedValue({
       ...STATUS,
       backend: 'mock',
-      runtime: { ...STATUS.runtime, available: false, version: null, detail: 'not found on PATH' },
+      runtime: {
+        ...STATUS.runtime,
+        available: false,
+        installed: false,
+        verified: false,
+        source: 'none',
+        isolated: false,
+        version: null,
+        executable: null,
+        detail: "Solo's isolated Pi Agent is not installed yet.",
+      },
+    } as never)
+    vi.mocked(pi.installRuntime).mockResolvedValue({
+      ok: true,
+      message: 'Pi Agent 1.1.0 installed into Solo\'s runtime.',
+      detail: null,
+      version: '1.1.0',
+      duration_ms: 1200,
+      output: null,
+      runtime: STATUS.runtime,
+    } as never)
+
+    render(<PiAgentSettings />)
+    const button = await screen.findByRole('button', { name: /install pi agent/i })
+    await userEvent.click(button)
+    await waitFor(() => expect(pi.installRuntime).toHaveBeenCalledWith(true))
+  })
+
+  it('states plainly when the runtime is not installed', async () => {
+    vi.mocked(pi.status).mockResolvedValue({
+      ...STATUS,
+      backend: 'mock',
+      runtime: {
+        ...STATUS.runtime,
+        available: false,
+        installed: false,
+        verified: false,
+        source: 'none',
+        isolated: false,
+        version: null,
+        detail: "Solo's isolated Pi Agent is not installed yet.",
+      },
     } as never)
     render(<PiAgentSettings />)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/not found on PATH/)
+    expect(await screen.findByText(/Solo's Pi Agent is not installed/)).toBeInTheDocument()
     expect(screen.getByText('Simulator')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /install pi agent/i }),
+    ).toBeInTheDocument()
   })
 
   it('lists providers and marks unconfigured state', async () => {

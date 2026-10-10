@@ -19,6 +19,7 @@ from ..schemas import (
     PiAuthOut,
     PiCatalogRefreshOut,
     PiCredentialIn,
+    PiInstallOut,
     PiModelOut,
     PiProviderOut,
     PiRuntimeOut,
@@ -33,17 +34,12 @@ router = APIRouter(prefix="/api/pi", tags=["pi"])
 
 async def _status(container: ContainerDep) -> PiStatusOut:
     service = container.pi_config
-    runtime = await service.runtime()
+    runtime = container.pi_runtime
+    status = await runtime.status()
     saved = service.saved_credentials()
 
     return PiStatusOut(
-        runtime=PiRuntimeOut(
-            available=runtime.available,
-            version=runtime.version,
-            executable=runtime.executable,
-            agent_dir=runtime.agent_dir,
-            detail=runtime.detail,
-        ),
+        runtime=PiRuntimeOut.model_validate(status.to_dict()),
         backend=container.backend_name,
         provider=await container.settings_service.get_plain("pi_provider"),
         model=await container.settings_service.get_plain("pi_model"),
@@ -52,9 +48,64 @@ async def _status(container: ContainerDep) -> PiStatusOut:
         minimal_harness=container.settings.pi_minimal_harness,
         agent_dir=str(service.agent_dir()),
         auth_file=str(service.auth_file()),
+        runtime_dir=str(runtime.runtime_dir()),
+        node=status.node,
         configured_providers=sorted(saved.keys()),
         sessions=container.orchestrator.sessions(),
     )
+
+
+@router.get("/runtime", response_model=PiRuntimeOut)
+async def runtime_status(
+    container: ContainerDep,
+    _: CurrentUser,
+    verify: bool = Query(
+        default=False,
+        description="Start the runtime and run a command to prove it works",
+    ),
+) -> PiRuntimeOut:
+    """Solo's own isolated Pi runtime, never the host's installation."""
+    status = await container.pi_runtime.status(verify=verify)
+    return PiRuntimeOut.model_validate(status.to_dict())
+
+
+@router.post("/runtime/install", response_model=PiInstallOut)
+async def install_runtime(
+    container: ContainerDep,
+    _: CurrentUser,
+    force: bool = Query(default=False, description="Reinstall even if present"),
+    verify: bool = Query(default=True, description="Prove it can start afterwards"),
+) -> PiInstallOut:
+    """Install or upgrade Solo's own Pi Agent into its isolated runtime."""
+    runtime = container.pi_runtime
+    try:
+        runtime.initialize()
+    except OSError as exc:
+        return PiInstallOut(
+            ok=False,
+            message=f"Could not create Solo's Pi directories: {exc.strerror or exc}",
+        )
+
+    result = await runtime.install(force=force)
+    status = await runtime.status(verify=verify and result.ok)
+    return PiInstallOut(
+        ok=result.ok and (status.verified if verify else status.installed),
+        message=result.message,
+        detail=result.detail,
+        version=result.version,
+        duration_ms=result.duration_ms,
+        output=result.output,
+        runtime=PiRuntimeOut.model_validate(status.to_dict()),
+    )
+
+
+@router.post("/runtime/verify", response_model=PiRuntimeOut)
+async def verify_runtime(
+    container: ContainerDep, _: CurrentUser
+) -> PiRuntimeOut:
+    """Start Solo's runtime and run one command, proving it actually works."""
+    status = await container.pi_runtime.status(verify=True)
+    return PiRuntimeOut.model_validate(status.to_dict())
 
 
 @router.get("/status", response_model=PiStatusOut)
@@ -121,9 +172,35 @@ async def save_credential(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Could not save the credential: {exc}",
         ) from exc
+
+    # A credential with no catalog means no models, so refresh it immediately.
+    # This is what makes an isolated agent directory usable without a terminal.
+    catalog = await _refresh_catalog_quietly(container)
     check = await container.pi_config.auth_check(provider)
-    logger.info("saved Pi credential for %s (status=%s)", provider, check.status)
-    return PiAuthOut.model_validate(check.to_dict())
+    logger.info(
+        "saved Pi credential for %s (status=%s, catalog=%s)",
+        provider,
+        check.status,
+        catalog,
+    )
+    result = PiAuthOut.model_validate(check.to_dict())
+    if catalog:
+        result.detail = catalog
+    return result
+
+
+async def _refresh_catalog_quietly(container: ContainerDep) -> str | None:
+    """Refresh Pi's model catalog, reporting the outcome as a short string."""
+    try:
+        container.pi_config.invalidate_model_cache()
+        refresh = await container.pi_config.refresh_catalog()
+        models = await container.pi_config.list_models(refresh=True)
+    except (PiUnavailableError, PiRpcError, PiTimeoutError, OSError) as exc:
+        logger.info("model catalog refresh skipped: %s", exc)
+        return None
+    if not refresh.get("ok"):
+        return str(refresh.get("message") or "catalog refresh failed")
+    return f"Discovered {len(models)} model(s) in Solo's own catalog."
 
 
 @router.delete("/providers/{provider}/credential", response_model=PiAuthOut)
@@ -166,8 +243,12 @@ async def credential_from_orchestrator(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Could not save the credential: {exc}",
         ) from exc
+    catalog = await _refresh_catalog_quietly(container)
     check = await container.pi_config.auth_check(provider)
-    return PiAuthOut.model_validate(check.to_dict())
+    result = PiAuthOut.model_validate(check.to_dict())
+    if catalog:
+        result.detail = catalog
+    return result
 
 
 @router.post("/providers/{provider}/test", response_model=ConnectionTestResult)

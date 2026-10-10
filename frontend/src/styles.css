@@ -1424,3 +1424,277 @@ textarea {
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
+
+/* ------------------------------------------------------------------ */
+/* Write panel                                                         */
+/* ------------------------------------------------------------------ */
+.write__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.write__toolbar > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The file picker is driven by a button, so it stays out of the layout. */
+.write__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.write__body {
+  display: flex;
+  min-height: 0;
+}
+
+.write__editor {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 14px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.write__editor::placeholder {
+  color: var(--text-faint);
+}
+
+.write__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Voice indicator                                                     */
+/* ------------------------------------------------------------------ */
+.voice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+.voice__orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: default;
+}
+
+.voice__orb:not(:disabled) {
+  cursor: pointer;
+}
+
+.voice__core {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--accent-strong), var(--accent));
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.5), 0 6px 18px rgba(91, 141, 239, 0.25);
+}
+
+.voice__bar {
+  display: block;
+  width: 2px;
+  border-radius: 2px;
+  background: #07101f;
+  height: 6px;
+  opacity: 0.85;
+}
+
+.voice__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(91, 141, 239, 0.45);
+  opacity: 0;
+}
+
+/* Idle breathing: communicates "ready for interaction" without implying audio. */
+.voice__orb--live .voice__core {
+  animation: voice-breathe 3.2s ease-in-out infinite;
+}
+
+.voice__orb--live .voice__bar {
+  animation: voice-wave 1.6s ease-in-out infinite;
+}
+
+.voice__orb--live .voice__bar:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.voice__orb--live .voice__bar:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.voice__orb--live .voice__bar:nth-child(4) {
+  animation-delay: 0.45s;
+}
+
+.voice__orb--live .voice__ring {
+  animation: voice-ripple 3.2s ease-out infinite;
+}
+
+.voice__orb--live .voice__ring--2 {
+  animation-delay: 1.05s;
+}
+
+.voice__orb--live .voice__ring--3 {
+  animation-delay: 2.1s;
+}
+
+.voice--active .voice__core {
+  animation-duration: 1.4s;
+}
+
+.voice--active .voice__ring {
+  border-color: rgba(53, 196, 138, 0.5);
+  animation-duration: 1.6s;
+}
+
+.voice__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@keyframes voice-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.5), 0 6px 18px rgba(91, 141, 239, 0.22);
+  }
+  50% {
+    transform: scale(1.07);
+    box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.7), 0 8px 24px rgba(91, 141, 239, 0.36);
+  }
+}
+
+@keyframes voice-wave {
+  0%,
+  100% {
+    height: 5px;
+    opacity: 0.7;
+  }
+  50% {
+    height: 14px;
+    opacity: 1;
+  }
+}
+
+@keyframes voice-ripple {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.72);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+/* Respect a reduced-motion preference: keep the indicator, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .voice__orb--live .voice__core,
+  .voice__orb--live .voice__bar,
+  .voice__orb--live .voice__ring {
+    animation: none;
+  }
+
+  .voice__ring--1 {
+    opacity: 0.35;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Runtime status banner                                               */
+/* ------------------------------------------------------------------ */
+.runtime-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.runtime-card--ok {
+  border-color: rgba(53, 196, 138, 0.4);
+  background: linear-gradient(180deg, var(--success-soft), var(--surface-2));
+}
+
+.runtime-card--warn {
+  border-color: rgba(240, 180, 41, 0.4);
+  background: linear-gradient(180deg, var(--warning-soft), var(--surface-2));
+}
+
+.runtime-card--bad {
+  border-color: rgba(255, 107, 107, 0.4);
+  background: linear-gradient(180deg, var(--danger-soft), var(--surface-2));
+}
+
+.runtime-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.runtime-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.runtime-card__detail {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

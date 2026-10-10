@@ -145,10 +145,17 @@ class PiRpcClient:
     async def start(self) -> None:
         if self.alive:
             return
-        executable = shutil.which(self._argv[0])
+        # Resolve the executable explicitly. An absolute path (which is what the
+        # Pi runtime always produces) is used as-is; a bare name is resolved
+        # through PATH only for callers that deliberately pass one.
+        first = self._argv[0]
+        if os.sep in first or (os.altsep and os.altsep in first):
+            executable = first if os.path.isfile(first) else None
+        else:
+            executable = shutil.which(first)
         if executable is None:
             raise PiUnavailableError(
-                f"the '{self._argv[0]}' executable was not found on PATH"
+                f"the '{first}' executable was not found"
             )
         env = {**os.environ, **self._env}
         try:

@@ -8,8 +8,10 @@ developer's real ``data/`` directory.
 from __future__ import annotations
 
 import itertools
+import stat
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +21,17 @@ from app.main import create_app
 
 ADMIN = {"username": "admin", "password": "correct-horse-battery"}
 TERMINAL = ("COMPLETED", "FAILED", "CANCELLED")
+
+FIXTURES = Path(__file__).parent / "fixtures"
+FAKE_PI = FIXTURES / "fake_pi"
+
+
+@pytest.fixture
+def fake_pi() -> str:
+    """Path to the executable stand-in for `pi --mode rpc`."""
+    assert FAKE_PI.is_file(), "the fake_pi fixture is missing"
+    FAKE_PI.chmod(FAKE_PI.stat().st_mode | stat.S_IXUSR)
+    return str(FAKE_PI)
 
 
 @pytest.fixture
@@ -108,3 +121,21 @@ def make_project() -> Callable[[TestClient, str], dict]:
         return response.json()
 
     return _make
+
+
+@pytest.fixture
+def pi_settings_factory(settings_factory, fake_pi, tmp_path):
+    """A settings factory that runs the fake Pi instead of the real one."""
+    counter = itertools.count()
+
+    def _factory(**overrides) -> Settings:
+        values = {
+            "pi_executable": fake_pi,
+            "pi_agent_dir": str(tmp_path / f"pi-agent-{next(counter)}"),
+            "agent_backend": "pi",
+            "checks_enabled": False,
+        }
+        values.update(overrides)
+        return settings_factory(**values)
+
+    return _factory

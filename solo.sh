@@ -24,6 +24,8 @@ DATA_DIR="$ROOT_DIR/data"
 PID_FILE="$DATA_DIR/solo.pid"
 LOG_FILE="$DATA_DIR/solo.log"
 PASSWORD_FILE="$DATA_DIR/initial-admin-password"
+TOOLS_DIR="$ROOT_DIR/.tools"
+LOCAL_PI_BIN="$TOOLS_DIR/pi/node_modules/.bin/pi"
 MIN_PYTHON="3.10"
 MIN_NODE_MAJOR=20
 
@@ -125,6 +127,81 @@ ensure_frontend() {
   ok "Web UI built into frontend/dist"
 }
 
+# --------------------------------------------------------------------------- #
+# Optional coding-agent dependencies
+# --------------------------------------------------------------------------- #
+# Pi is installed *locally* into .tools/pi rather than with a global npm
+# install, so setup needs no sudo and never touches the user's global npm tree.
+# An existing `pi` on PATH always wins.
+ensure_pi() {
+  if have pi; then
+    ok "Pi Coding Agent already on PATH: $(pi --version 2>/dev/null || echo 'version unknown')"
+    return 0
+  fi
+  if ! have npm; then
+    warn "npm is unavailable, so Pi Agent could not be installed."
+    warn "Coding tasks will use the built-in simulator until Pi is installed."
+    return 0
+  fi
+  if [[ -x "$LOCAL_PI_BIN" ]]; then
+    ok "Pi Coding Agent already installed locally"
+    set_env_value PI_EXECUTABLE "$LOCAL_PI_BIN"
+    return 0
+  fi
+
+  log "Installing Pi Coding Agent locally into .tools/pi (this may take a minute)"
+  if npm install --prefix "$TOOLS_DIR/pi" --no-audit --no-fund \
+      @earendil-works/pi-coding-agent >>"$LOG_FILE" 2>&1; then
+    if [[ -x "$LOCAL_PI_BIN" ]]; then
+      ok "Pi Coding Agent installed"
+      set_env_value PI_EXECUTABLE "$LOCAL_PI_BIN"
+      load_env
+      return 0
+    fi
+    warn "Pi installed but its executable was not found at the expected path."
+  else
+    warn "Could not install Pi Coding Agent (see ${LOG_FILE})."
+  fi
+  warn "Coding tasks will use the built-in simulator until Pi is available."
+  return 0
+}
+
+# Pyright is a pip dependency, so it arrives with ensure_venv. This only
+# reports whether the harness can actually run it.
+ensure_pyright() {
+  if [[ -x "$VENV_DIR/bin/pyright" ]] || have pyright; then
+    ok "Pyright available for static checks"
+  else
+    warn "Pyright is not available; static checks will be skipped."
+    warn "Install it later with: ./venv/bin/pip install pyright"
+  fi
+}
+
+# Write or replace a KEY=value line in .env without disturbing anything else.
+set_env_value() {
+  local key="$1" value="$2" file="$ROOT_DIR/.env"
+  [[ -f "$file" ]] || return 0
+  if grep -qE "^#?[[:space:]]*${key}=" "$file"; then
+    python3 - "$file" "$key" "$value" <<'PY'
+import pathlib, re, sys
+path, key, value = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+lines = path.read_text().splitlines()
+out, replaced = [], False
+for line in lines:
+    if re.match(rf"^#?\s*{re.escape(key)}=", line):
+        out.append(f"{key}={value}")
+        replaced = True
+    else:
+        out.append(line)
+if not replaced:
+    out.append(f"{key}={value}")
+path.write_text("\n".join(out) + "\n")
+PY
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$file"
+  fi
+}
+
 ensure_password() {
   mkdir -p "$DATA_DIR"
   chmod 700 "$DATA_DIR" 2>/dev/null || true
@@ -198,6 +275,10 @@ start_solo() {
   ensure_password
 
   mkdir -p "$DATA_DIR"
+  # Prefer a locally installed Pi when one exists and .env does not say otherwise.
+  if [[ -z "${PI_EXECUTABLE:-}" && -x "$LOCAL_PI_BIN" ]]; then
+    export PI_EXECUTABLE="$LOCAL_PI_BIN"
+  fi
   log "Starting Solo on ${BASE_URL}"
   (
     cd "$ROOT_DIR"
@@ -271,6 +352,11 @@ print_access() {
   echo
   echo " Logs:   ./solo.sh logs"
   echo " Stop:   ./solo.sh stop"
+  if have pi || [[ -x "$LOCAL_PI_BIN" ]] || [[ -n "${PI_EXECUTABLE:-}" ]]; then
+    echo " Agent:  Pi Coding Agent"
+  else
+    echo " Agent:  simulator (install Pi to run real coding tasks)"
+  fi
   echo "──────────────────────────────────────────────────────────────"
 }
 
@@ -290,6 +376,18 @@ cmd_doctor() {
   [[ -d "$VENV_DIR" ]] && ok "virtualenv present" || warn "virtualenv missing (run ./solo.sh install)"
   [[ -f "$ROOT_DIR/frontend/dist/index.html" ]] && ok "web UI built" || warn "web UI not built"
   [[ -f "$ROOT_DIR/.env" ]] && ok ".env present" || warn ".env missing (will be created)"
+  if have pi; then
+    ok "Pi Coding Agent on PATH: $(pi --version 2>/dev/null || echo unknown)"
+  elif [[ -x "$LOCAL_PI_BIN" ]]; then
+    ok "Pi Coding Agent installed locally at .tools/pi"
+  else
+    warn "Pi Coding Agent not found — coding tasks will use the built-in simulator"
+  fi
+  if [[ -x "$VENV_DIR/bin/pyright" ]]; then
+    ok "pyright available for static checks"
+  else
+    warn "pyright not installed — static checks will be skipped"
+  fi
 }
 
 cmd_install() {
@@ -298,6 +396,8 @@ cmd_install() {
   require_curl
   load_env
   ensure_venv
+  ensure_pi
+  ensure_pyright
   ensure_frontend
   start_solo
 }
@@ -311,6 +411,8 @@ cmd_update() {
     warn "Not a git checkout; skipping 'git pull'."
   fi
   ensure_venv
+  ensure_pi
+  ensure_pyright
   ensure_frontend
   stop_solo || true
   start_solo

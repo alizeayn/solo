@@ -60,7 +60,11 @@ class SettingsOut(BaseModel):
     pi_provider: str | None = None
     pi_model: str | None = None
     pi_base_url: str | None = None
+    pi_thinking_level: str | None = None
+    pi_approve_project: bool = False
     pi_reuse_openrouter_key: bool = False
+    orchestrator_enabled: bool = True
+    checks_enabled: bool = True
     voice_enabled: bool = True
     progress_speech_enabled: bool = True
     pi_version: str | None = None
@@ -78,7 +82,11 @@ class SettingsUpdate(BaseModel):
     pi_provider: str | None = None
     pi_model: str | None = None
     pi_base_url: str | None = None
+    pi_thinking_level: str | None = None
+    pi_approve_project: bool | None = None
     pi_reuse_openrouter_key: bool | None = None
+    orchestrator_enabled: bool | None = None
+    checks_enabled: bool | None = None
     voice_enabled: bool | None = None
     progress_speech_enabled: bool | None = None
 
@@ -86,6 +94,170 @@ class SettingsUpdate(BaseModel):
 class ConnectionTestResult(BaseModel):
     ok: bool
     message: str
+    detail: str | None = None
+    #: ``verified`` (a real request succeeded), ``configured`` (credentials
+    #: present but not exercised), ``not_configured``, ``failed`` or ``skipped``.
+    state: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Pi Agent configuration
+# --------------------------------------------------------------------------- #
+class PiRuntimeOut(BaseModel):
+    available: bool
+    version: str | None = None
+    executable: str | None = None
+    agent_dir: str | None = None
+    detail: str | None = None
+
+
+class PiProviderOut(BaseModel):
+    id: str
+    label: str
+    env_var: str | None = None
+    configured: bool = False
+    auth_type: str | None = None
+    #: ``saved``, ``environment``, ``oauth`` or ``none``.
+    source: str = "none"
+    model_count: int = 0
+    model_count_known: bool = True
+    in_catalog: bool = False
+
+
+class PiModelOut(BaseModel):
+    id: str
+    name: str
+    provider: str
+    reasoning: bool = False
+    context_window: int | None = None
+    max_tokens: int | None = None
+    input_modalities: list[str] = Field(default_factory=list)
+    cost: dict[str, Any] | None = None
+
+
+class PiCredentialIn(BaseModel):
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
+class PiAuthOut(BaseModel):
+    provider: str
+    status: str
+    ready: bool = False
+    auth_type: str | None = None
+    reason: str | None = None
+    detail: str | None = None
+
+
+class PiStatusOut(BaseModel):
+    runtime: PiRuntimeOut
+    #: ``pi``, ``mock`` — which backend coding tasks will use.
+    backend: str
+    provider: str | None = None
+    model: str | None = None
+    thinking_level: str | None = None
+    approve_project: bool = False
+    minimal_harness: bool = True
+    agent_dir: str | None = None
+    auth_file: str | None = None
+    configured_providers: list[str] = Field(default_factory=list)
+    sessions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PiCatalogRefreshOut(BaseModel):
+    ok: bool
+    message: str
+    output: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Orchestrator (OpenRouter)
+# --------------------------------------------------------------------------- #
+class OrchestratorStatusOut(BaseModel):
+    enabled: bool = True
+    configured: bool = False
+    has_key: bool = False
+    model: str | None = None
+    key_masked: str | None = None
+    call_count: int = 0
+    failure_count: int = 0
+    last_error: str | None = None
+    last_latency_ms: int | None = None
+    last_model: str | None = None
+
+
+class OrchestratorConfigIn(BaseModel):
+    model: str | None = None
+    enabled: bool | None = None
+
+
+class OpenRouterModelOut(BaseModel):
+    id: str
+    name: str
+    context_length: int | None = None
+    supports_structured_output: bool = False
+    pricing: dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- #
+# Orchestration state (project-scoped)
+# --------------------------------------------------------------------------- #
+class PlannedTaskOut(BaseModel):
+    id: str
+    title: str
+    instruction: str
+    priority: int = 50
+    depends_on: list[str] = Field(default_factory=list)
+    status: str = "pending"
+    source: str = "user"
+    task_id: str | None = None
+    note: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class OrchestrationStateOut(BaseModel):
+    summary: dict[str, Any] = Field(default_factory=dict)
+    state: dict[str, Any] = Field(default_factory=dict)
+
+
+class OrchestrationPlanIn(BaseModel):
+    instruction: str = Field(min_length=1, max_length=8000)
+
+
+# --------------------------------------------------------------------------- #
+# Static checks
+# --------------------------------------------------------------------------- #
+class DiagnosticOut(BaseModel):
+    file: str
+    line: int
+    column: int
+    severity: str
+    message: str
+    rule: str | None = None
+
+
+class CheckResultOut(BaseModel):
+    tool: str
+    outcome: str
+    summary: str
+    error_count: int = 0
+    warning_count: int = 0
+    files_checked: int = 0
+    duration_ms: int = 0
+    command: str | None = None
+    output: str | None = None
+    passed: bool = False
+    diagnostics: list[DiagnosticOut] = Field(default_factory=list)
+
+
+class ChecksStatusOut(BaseModel):
+    enabled: bool
+    available: bool
+    tool: str
+    executable: str | None = None
     detail: str | None = None
 
 
@@ -241,6 +413,9 @@ class MessageDispatchResult(BaseModel):
     intent: str
     message: MessageOut
     task_id: str | None = None
+    #: ``orchestrator-model`` when the OpenRouter model classified the message,
+    #: ``rules`` when the deterministic fallback did.
+    classified_by: str = "rules"
 
 
 # --------------------------------------------------------------------------- #

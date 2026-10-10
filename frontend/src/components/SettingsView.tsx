@@ -1,400 +1,321 @@
 /**
- * Settings screen.
+ * Workspace Settings.
  *
- * Secrets are write-only from the UI's perspective: existing keys are shown as
- * a masked status, never as a value. Every provider has an explicit
- * "Test connection" action that validates against the real service.
+ * Organised around the two models Solo actually uses, so each has one obvious
+ * home:
+ *
+ *   **Orchestrator** — OpenRouter: intent detection, prioritisation, state
+ *   management, summaries.
+ *   **Pi Agent** — provider, credentials, model discovery and the coding agent
+ *   that executes tasks in the open project.
+ *   **Voice** — ElevenLabs (Phase 4).
+ *   **Preferences** — feature toggles.
+ *
+ * Every secret is write-only: the UI sends values and only ever reads back a
+ * masked status. No screen reports a connection as working unless the
+ * corresponding check actually succeeded.
  */
 
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 
 import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import type { ConnectionTestResult, SettingsPatch } from '../types'
+import OrchestratorSettings from './OrchestratorSettings'
+import PiAgentSettings from './PiAgentSettings'
 
-type ProviderKey = 'openrouter' | 'elevenlabs' | 'pi'
+type Tab = 'orchestrator' | 'pi' | 'voice' | 'preferences'
+
+const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: 'orchestrator', label: 'Orchestrator', hint: 'OpenRouter · intent, planning, summaries' },
+  { id: 'pi', label: 'Pi Agent', hint: 'Provider, credentials, model' },
+  { id: 'voice', label: 'Voice', hint: 'ElevenLabs (Phase 4)' },
+  { id: 'preferences', label: 'Preferences', hint: 'Behaviour and checks' },
+]
 
 export default function SettingsView({ onClose }: { onClose: () => void }) {
-  const { settings, refreshSettings } = useWorkspace()
-
-  const [openrouterKey, setOpenrouterKey] = useState('')
-  const [openrouterModel, setOpenrouterModel] = useState(settings?.openrouter_model ?? '')
-  const [elevenKey, setElevenKey] = useState('')
-  const [agentId, setAgentId] = useState(settings?.elevenlabs_agent_id ?? '')
-  const [voiceId, setVoiceId] = useState(settings?.elevenlabs_tts_voice_id ?? '')
-  const [piProvider, setPiProvider] = useState(settings?.pi_provider ?? '')
-  const [piModel, setPiModel] = useState(settings?.pi_model ?? '')
-  const [piBaseUrl, setPiBaseUrl] = useState(settings?.pi_base_url ?? '')
-  const [reuseOpenRouterKey, setReuseOpenRouterKey] = useState(
-    settings?.pi_reuse_openrouter_key ?? false,
-  )
-  const [voiceEnabled, setVoiceEnabled] = useState(settings?.voice_enabled ?? true)
-  const [speechEnabled, setSpeechEnabled] = useState(
-    settings?.progress_speech_enabled ?? true,
-  )
-
-  const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [tests, setTests] = useState<Partial<Record<ProviderKey, ConnectionTestResult>>>({})
-
-  async function save(event: FormEvent) {
-    event.preventDefault()
-    setBusy(true)
-    setError(null)
-    setStatus(null)
-
-    const patch: SettingsPatch = {
-      openrouter_model: openrouterModel,
-      elevenlabs_agent_id: agentId,
-      elevenlabs_tts_voice_id: voiceId,
-      pi_provider: piProvider,
-      pi_model: piModel,
-      pi_base_url: piBaseUrl,
-      pi_reuse_openrouter_key: reuseOpenRouterKey,
-      voice_enabled: voiceEnabled,
-      progress_speech_enabled: speechEnabled,
-    }
-    // Only send secret fields when the user actually typed a new value.
-    if (openrouterKey) patch.openrouter_api_key = openrouterKey
-    if (elevenKey) patch.elevenlabs_api_key = elevenKey
-
-    try {
-      await api.settings.update(patch)
-      setOpenrouterKey('')
-      setElevenKey('')
-      await refreshSettings()
-      setStatus('Settings saved.')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function removeSecret(key: 'openrouter_api_key' | 'elevenlabs_api_key') {
-    try {
-      await api.settings.removeSecret(key)
-      await refreshSettings()
-      setStatus('Key removed.')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-
-  async function runTest(provider: ProviderKey) {
-    setTests((previous) => ({ ...previous, [provider]: undefined }))
-    try {
-      const result = await api.settings.test(provider)
-      setTests((previous) => ({ ...previous, [provider]: result }))
-    } catch (cause) {
-      setTests((previous) => ({
-        ...previous,
-        [provider]: {
-          ok: false,
-          message: cause instanceof Error ? cause.message : String(cause),
-          detail: null,
-        },
-      }))
-    }
-  }
+  const [tab, setTab] = useState<Tab>('orchestrator')
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="Settings">
-      <form className="card card--wide" onSubmit={save}>
-        <div className="settings-section__head">
+      <div className="card card--wide settings-shell">
+        <header className="settings-shell__head">
           <div>
             <h1 className="card__title">Settings</h1>
             <p className="card__subtitle" style={{ marginBottom: 0 }}>
-              Credentials are stored server-side, encrypted at rest, and never
-              returned to the browser.
+              Credentials are stored server-side, encrypted at rest, and never sent back to the
+              browser.
             </p>
           </div>
           <button type="button" className="btn btn--ghost" onClick={onClose}>
             Close
           </button>
+        </header>
+
+        <nav className="settings-shell__tabs" role="tablist" aria-label="Settings sections">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={`settings-tab ${tab === item.id ? 'settings-tab--active' : ''}`}
+              onClick={() => setTab(item.id)}
+            >
+              <span className="settings-tab__label">{item.label}</span>
+              <span className="settings-tab__hint">{item.hint}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-shell__body">
+          {tab === 'orchestrator' && <OrchestratorSettings />}
+          {tab === 'pi' && <PiAgentSettings />}
+          {tab === 'voice' && <VoiceSettings />}
+          {tab === 'preferences' && <PreferencesSettings />}
         </div>
 
-        {error && (
-          <div className="alert alert--error" role="alert" style={{ margin: '14px 0' }}>
-            {error}
-          </div>
-        )}
-        {status && !error && (
-          <div className="alert alert--info" style={{ margin: '14px 0' }}>
-            {status}
-          </div>
-        )}
-
-        {/* ---------------- OpenRouter ---------------- */}
-        <section className="settings-section">
-          <div className="settings-section__head">
-            <h2 className="settings-section__title">OpenRouter</h2>
-            <button
-              type="button"
-              className="btn btn--sm"
-              onClick={() => void runTest('openrouter')}
-            >
-              Test connection
-            </button>
-          </div>
-
-          <div className="settings-grid">
-            <div className="field">
-              <label htmlFor="openrouter-key">
-                API key{' '}
-                <span className="hint">
-                  {settings?.openrouter_api_key.configured
-                    ? `— configured (${settings.openrouter_api_key.masked})`
-                    : '— not configured'}
-                </span>
-              </label>
-              <input
-                id="openrouter-key"
-                className="input"
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  settings?.openrouter_api_key.configured
-                    ? 'Leave blank to keep the current key'
-                    : 'sk-or-v1-…'
-                }
-                value={openrouterKey}
-                onChange={(event) => setOpenrouterKey(event.target.value)}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="openrouter-model">Model ID</label>
-              <input
-                id="openrouter-model"
-                className="input"
-                placeholder="e.g. anthropic/claude-3.5-sonnet"
-                value={openrouterModel}
-                onChange={(event) => setOpenrouterModel(event.target.value)}
-              />
-              <span className="hint">
-                Used for intent routing, progress summaries and project Q&amp;A.
-              </span>
-            </div>
-
-            {settings?.openrouter_api_key.configured && (
-              <button
-                type="button"
-                className="btn btn--danger btn--sm"
-                onClick={() => void removeSecret('openrouter_api_key')}
-              >
-                Remove stored key
-              </button>
-            )}
-          </div>
-
-          <TestResult result={tests.openrouter} />
-        </section>
-
-        {/* ---------------- ElevenLabs ---------------- */}
-        <section className="settings-section">
-          <div className="settings-section__head">
-            <h2 className="settings-section__title">ElevenLabs</h2>
-            <button
-              type="button"
-              className="btn btn--sm"
-              onClick={() => void runTest('elevenlabs')}
-            >
-              Test connection
-            </button>
-          </div>
-
-          <div className="settings-grid">
-            <div className="field">
-              <label htmlFor="eleven-key">
-                API key{' '}
-                <span className="hint">
-                  {settings?.elevenlabs_api_key.configured
-                    ? `— configured (${settings.elevenlabs_api_key.masked})`
-                    : '— not configured'}
-                </span>
-              </label>
-              <input
-                id="eleven-key"
-                className="input"
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  settings?.elevenlabs_api_key.configured
-                    ? 'Leave blank to keep the current key'
-                    : 'sk_…'
-                }
-                value={elevenKey}
-                onChange={(event) => setElevenKey(event.target.value)}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="agent-id">Conversational Agent ID (required)</label>
-              <input
-                id="agent-id"
-                className="input"
-                placeholder="agent_…"
-                value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
-              />
-              <span className="hint">
-                Without an Agent ID, live voice conversations cannot start.
-              </span>
-            </div>
-
-            <div className="field">
-              <label htmlFor="voice-id">TTS voice ID (progress announcements)</label>
-              <input
-                id="voice-id"
-                className="input"
-                placeholder="voice ID for short progress speech"
-                value={voiceId}
-                onChange={(event) => setVoiceId(event.target.value)}
-              />
-            </div>
-
-            {settings?.elevenlabs_api_key.configured && (
-              <button
-                type="button"
-                className="btn btn--danger btn--sm"
-                onClick={() => void removeSecret('elevenlabs_api_key')}
-              >
-                Remove stored key
-              </button>
-            )}
-          </div>
-
-          <TestResult result={tests.elevenlabs} />
-        </section>
-
-        {/* ---------------- Coding agent ---------------- */}
-        <section className="settings-section">
-          <div className="settings-section__head">
-            <h2 className="settings-section__title">Coding agent (Pi)</h2>
-            <button type="button" className="btn btn--sm" onClick={() => void runTest('pi')}>
-              Test runtime
-            </button>
-          </div>
-
-          <div className="settings-grid">
-            <div className="detail-grid">
-              <dt>Pi version</dt>
-              <dd>{settings?.pi_version ?? 'not detected'}</dd>
-              <dt>RPC session</dt>
-              <dd>
-                {settings?.pi_rpc_available
-                  ? 'available'
-                  : 'managed RPC sessions arrive in Phase 2'}
-              </dd>
-              <dt>Active backend</dt>
-              <dd>simulated agent (Phase 1) — no files are modified</dd>
-            </div>
-
-            <div className="field">
-              <label htmlFor="pi-provider">Provider</label>
-              <input
-                id="pi-provider"
-                className="input"
-                placeholder="e.g. openrouter, anthropic, openai"
-                value={piProvider}
-                onChange={(event) => setPiProvider(event.target.value)}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="pi-model">Model ID</label>
-              <input
-                id="pi-model"
-                className="input"
-                placeholder="provider model identifier"
-                value={piModel}
-                onChange={(event) => setPiModel(event.target.value)}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="pi-base-url">Base URL (optional)</label>
-              <input
-                id="pi-base-url"
-                className="input"
-                placeholder="only if the provider requires it"
-                value={piBaseUrl}
-                onChange={(event) => setPiBaseUrl(event.target.value)}
-              />
-            </div>
-
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={reuseOpenRouterKey}
-                onChange={(event) => setReuseOpenRouterKey(event.target.checked)}
-              />
-              Reuse the OpenRouter API key for Pi (avoid entering it twice)
-            </label>
-
-            <span className="hint">
-              Provider and model changes apply to new agent sessions.
-            </span>
-          </div>
-
-          <TestResult result={tests.pi} />
-        </section>
-
-        {/* ---------------- Preferences ---------------- */}
-        <section className="settings-section">
-          <h2 className="settings-section__title">Preferences</h2>
-          <div className="settings-grid">
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(event) => setVoiceEnabled(event.target.checked)}
-              />
-              Enable live voice conversation (Phase 4)
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={speechEnabled}
-                onChange={(event) => setSpeechEnabled(event.target.checked)}
-              />
-              Speak short progress announcements (Phase 5)
-            </label>
-            <span className="hint">
-              Progress is always shown visually, so voice can be disabled without
-              losing information.
-            </span>
-          </div>
-        </section>
-
-        <div className="header__group" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn--ghost" onClick={onClose}>
-            Cancel
+        <footer className="settings-shell__foot">
+          <button type="button" className="btn" onClick={onClose}>
+            Done
           </button>
-          <button className="btn btn--primary" type="submit" disabled={busy}>
-            {busy ? 'Saving…' : 'Save settings'}
-          </button>
-        </div>
-      </form>
+        </footer>
+      </div>
     </div>
   )
 }
 
-function TestResult({ result }: { result?: ConnectionTestResult }) {
-  if (!result) return null
+/* ------------------------------------------------------------------ */
+/* Voice (Phase 4 placeholders, stored now so configuration is ready)  */
+/* ------------------------------------------------------------------ */
+function VoiceSettings() {
+  const { settings, refreshSettings } = useWorkspace()
+  const [apiKey, setApiKey] = useState('')
+  const [agentId, setAgentId] = useState(settings?.elevenlabs_agent_id ?? '')
+  const [voiceId, setVoiceId] = useState(settings?.elevenlabs_tts_voice_id ?? '')
+  const [result, setResult] = useState<ConnectionTestResult | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  async function guarded(key: string, action: () => Promise<void>) {
+    setBusy(key)
+    setError(null)
+    setNotice(null)
+    try {
+      await action()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const save = () =>
+    guarded('save', async () => {
+      const patch: SettingsPatch = {
+        elevenlabs_agent_id: agentId,
+        elevenlabs_tts_voice_id: voiceId,
+      }
+      if (apiKey.trim()) patch.elevenlabs_api_key = apiKey.trim()
+      await api.settings.update(patch)
+      setApiKey('')
+      await refreshSettings()
+      setNotice('Voice settings saved.')
+    })
+
   return (
-    <div
-      className={`test-result alert ${result.ok ? 'alert--info' : 'alert--error'}`}
-      role="status"
-    >
-      {result.ok ? '✓' : '✕'} {result.message}
-      {result.detail && (
-        <div className="hint" style={{ marginTop: 4 }}>
-          {result.detail}
+    <div className="settings-pane">
+      <div className="alert alert--info">
+        Live voice conversations and spoken progress arrive in Phases 4 and 5. Credentials can be
+        configured and tested now so the integration has somewhere to read from.
+      </div>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h3 className="settings-section__title">ElevenLabs</h3>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={busy === 'test'}
+            onClick={() =>
+              void guarded('test', async () => {
+                setResult(await api.settings.test('elevenlabs'))
+              })
+            }
+          >
+            Test connection
+          </button>
         </div>
-      )}
+
+        <div className="settings-grid">
+          <div className="field">
+            <label htmlFor="el-key">
+              API key{' '}
+              <span className="hint">
+                {settings?.elevenlabs_api_key.configured
+                  ? `— saved (${settings.elevenlabs_api_key.masked})`
+                  : '— not saved'}
+              </span>
+            </label>
+            <input
+              id="el-key"
+              className="input"
+              type="password"
+              autoComplete="off"
+              placeholder={settings?.elevenlabs_api_key.configured ? 'Replace the saved key' : 'sk_…'}
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="el-agent">Conversational Agent ID (required for voice)</label>
+            <input
+              id="el-agent"
+              className="input"
+              placeholder="agent_…"
+              value={agentId}
+              onChange={(event) => setAgentId(event.target.value)}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="el-voice">TTS voice ID (progress announcements)</label>
+            <input
+              id="el-voice"
+              className="input"
+              placeholder="voice ID"
+              value={voiceId}
+              onChange={(event) => setVoiceId(event.target.value)}
+            />
+          </div>
+
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              disabled={busy === 'save'}
+              onClick={() => void save()}
+            >
+              {busy === 'save' ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+
+          {result && (
+            <div
+              className={`test-result alert ${result.ok ? 'alert--info' : 'alert--error'}`}
+              role="status"
+            >
+              {result.message}
+              {result.detail && <div className="hint">{result.detail}</div>}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {error && <div className="alert alert--error">{error}</div>}
+      {notice && !error && <div className="alert alert--info">{notice}</div>}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Preferences                                                         */
+/* ------------------------------------------------------------------ */
+function PreferencesSettings() {
+  const { settings, refreshSettings } = useWorkspace()
+  const [busy, setBusy] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [checksStatus, setChecksStatus] = useState<{
+    available: boolean
+    detail: string | null
+  } | null>(null)
+
+  async function toggle(key: keyof SettingsPatch, value: boolean) {
+    setBusy(String(key))
+    setError(null)
+    try {
+      await api.settings.update({ [key]: value } as SettingsPatch)
+      await refreshSettings()
+      setNotice('Preference saved.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function loadChecks() {
+    try {
+      setChecksStatus(await api.checks.status())
+    } catch {
+      setChecksStatus(null)
+    }
+  }
+
+  return (
+    <div className="settings-pane">
+      <section className="settings-section">
+        <h3 className="settings-section__title">Behaviour</h3>
+        <div className="settings-grid">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings?.voice_enabled ?? true}
+              disabled={busy === 'voice_enabled'}
+              onChange={(event) => void toggle('voice_enabled', event.target.checked)}
+            />
+            Enable live voice conversation (Phase 4)
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings?.progress_speech_enabled ?? true}
+              disabled={busy === 'progress_speech_enabled'}
+              onChange={(event) => void toggle('progress_speech_enabled', event.target.checked)}
+            />
+            Speak short progress announcements (Phase 5)
+          </label>
+          <span className="hint">
+            Progress is always shown visually, so voice can be disabled without losing
+            information.
+          </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section__head">
+          <h3 className="settings-section__title">Static checks (Pyright)</h3>
+          <button type="button" className="btn btn--sm" onClick={() => void loadChecks()}>
+            Check availability
+          </button>
+        </div>
+        <div className="settings-grid">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings?.checks_enabled ?? true}
+              disabled={busy === 'checks_enabled'}
+              onChange={(event) => void toggle('checks_enabled', event.target.checked)}
+            />
+            Run Pyright over the files a coding task changed
+          </label>
+          <span className="hint">
+            Solo uses Pi to make changes and Pyright to verify them. Checks never block a task;
+            results appear in the Coding Agent Activity panel.
+          </span>
+          {checksStatus && (
+            <div className={`alert ${checksStatus.available ? 'alert--info' : 'alert--error'}`}>
+              {checksStatus.detail}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {error && <div className="alert alert--error">{error}</div>}
+      {notice && !error && <div className="alert alert--info">{notice}</div>}
     </div>
   )
 }

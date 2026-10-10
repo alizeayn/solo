@@ -16,6 +16,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..adapters.pi_agent import probe_pi_runtime
+from ..adapters.pi_session import PiLaunchConfig
 from ..config import Settings
 from ..domain import PLAIN_SETTING_KEYS, SECRET_SETTING_KEYS
 from ..logging_setup import forget_secret, register_secret
@@ -101,12 +102,36 @@ class SettingsService:
             pi_provider=plain("pi_provider"),
             pi_model=plain("pi_model"),
             pi_base_url=plain("pi_base_url"),
+            pi_thinking_level=plain("pi_thinking_level"),
+            pi_approve_project=plain("pi_approve_project", "false") == "true",
             pi_reuse_openrouter_key=plain("pi_reuse_openrouter_key", "false") == "true",
+            orchestrator_enabled=plain("orchestrator_enabled", "true") == "true",
+            checks_enabled=plain("checks_enabled", "true") == "true",
             voice_enabled=plain("voice_enabled", "true") == "true",
             progress_speech_enabled=plain("progress_speech_enabled", "true") == "true",
             pi_version=pi_info.version,
             pi_rpc_available=pi_info.rpc_supported,
         )
+
+    # ------------------------------------------------------------------ #
+    # Pi Agent configuration
+    # ------------------------------------------------------------------ #
+    async def pi_launch_config(self) -> PiLaunchConfig:
+        """The launch configuration for the Pi subprocess, from saved settings."""
+        return PiLaunchConfig(
+            provider=(await self.get_plain("pi_provider")) or None,
+            model=(await self.get_plain("pi_model")) or None,
+            thinking_level=(await self.get_plain("pi_thinking_level")) or None,
+            approve_project=await self.get_bool("pi_approve_project", False),
+            minimal_harness=self._settings.pi_minimal_harness,
+        )
+
+    async def orchestrator_settings(self) -> dict[str, Any]:
+        """OpenRouter configuration for the Orchestrator (never the key)."""
+        return {
+            "enabled": await self.get_bool("orchestrator_enabled", True),
+            "model": await self.get_plain("openrouter_model"),
+        }
 
     # ------------------------------------------------------------------ #
     # Writing

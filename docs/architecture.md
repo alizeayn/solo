@@ -45,6 +45,12 @@ separated by responsibility, not by deployment.
 | `repositories/` | **All** database access. One class per aggregate. |
 | `services/` | Business logic (see below). |
 | `adapters/` | Provider integration behind a stable contract. |
+| `services/pi_config.py` | Pi providers, credentials (via Pi's `auth.json`), model discovery and validation. |
+| `services/openrouter.py` | Thin OpenRouter transport: key check, model list, JSON-constrained completions. |
+| `services/orchestrator_brain.py` | The Orchestrator's reasoning: intent, planning, prioritisation, summaries, Q&A. |
+| `services/orchestration_state.py` | Durable per-project working memory: queue, priorities, dependencies, notes. |
+| `services/checks.py` | Pyright integration — the verification half of the harness. |
+| `api/pi.py`, `api/orchestrator.py`, `api/orchestration.py` | Settings-UI endpoints for Pi, OpenRouter and the plan. |
 | `api/` | HTTP + WebSocket routers; validation and status-code mapping. |
 | `container.py` | Builds and owns long-lived dependencies (the only place that picks concrete implementations). |
 | `main.py` | App factory: lifespan, routers, middleware, static SPA. |
@@ -154,7 +160,38 @@ way back in.
 
 ---
 
-## 5. Task lifecycle
+## 5. Coding agent and orchestrator
+
+The backend is a swap of one adapter, but Phase 2 added a decision layer above it
+and a verification step beside it.
+
+```
+Chat ─► Orchestrator ─► OrchestrationState ─► TaskService ─► CodingAgentAdapter
+          (OpenRouter +      (queue, notes,      (lifecycle,      ├── Mock (simulator)
+           rules fallback)    priorities)         events)         └── Pi (RPC)
+                                                                        │
+                        ChecksService (Pyright) ◄── changed files ──────┘
+```
+
+- **`CodingAgentAdapter` is unchanged.** `PiCodingAgentAdapter` implements the
+  same protocol as the simulator, so task lifecycle, event storage, the
+  WebSocket and the UI needed no changes.
+- **Process model:** one long-lived `pi --mode rpc` subprocess per project.
+  Sessions are keyed by the resolved project directory. See
+  [pi-agent.md](pi-agent.md).
+- **Decision layer:** the Orchestrator model classifies, plans and summarises;
+  the deterministic `IntentRouter` remains the permanent fallback so a missing
+  key or a provider outage degrades rather than breaks. See
+  [orchestrator.md](orchestrator.md).
+- **Verification:** Pyright runs after a task settles, over the files the agent
+  changed, and reports diagnostics as a `check.result` event.
+- **Post-settle work is asynchronous.** The terminal status is broadcast first;
+  summarisation, checks and queue advancement follow. A slow model can never
+  delay the moment the user is told a task finished.
+
+---
+
+## 6. Task lifecycle
 
 ```
 QUEUED ──▶ RUNNING ──┬──▶ COMPLETED
@@ -180,7 +217,7 @@ Rules enforced in code:
 
 ---
 
-## 6. Event vocabulary
+## 7. Event vocabulary
 
 The rest of the app never parses provider protocol output. Each adapter
 translates its records into these types (`domain.EventType`):
@@ -194,7 +231,7 @@ never loses data — the UI can always re-fetch from REST.
 
 ---
 
-## 7. Intent routing
+## 8. Intent routing
 
 `IntentRouter.classify(content, has_active_task)` returns one of
 `CHAT_OR_EXPLAIN`, `STEER_ACTIVE_TASK`, `STOP_ACTIVE_TASK`,
@@ -217,7 +254,7 @@ contract**, with Pydantic-validated output.
 
 ---
 
-## 8. Adapter contract
+## 9. Adapter contract
 
 ```python
 class CodingAgentAdapter(Protocol):
@@ -241,7 +278,7 @@ The orchestrator is unaware of which adapter is active.
 
 ---
 
-## 9. Frontend state
+## 10. Frontend state
 
 `WorkspaceProvider` holds the active project, its tasks, messages and the live
 event feed, and mirrors backend state rather than owning it.
@@ -258,7 +295,7 @@ event feed, and mirrors backend state rather than owning it.
 
 ---
 
-## 10. Extension points
+## 11. Extension points
 
 | To add… | Change |
 |---|---|
@@ -268,4 +305,6 @@ event feed, and mirrors backend state rather than owning it.
 | A new panel | Add a component, register it in `DockLayout`'s `components` map. |
 | A new event type | Add to `domain.EventType`; the timeline renders unknown types gracefully. |
 | A project state node kind | Emit it from `_compose_tree` in `project_store.py`; the tree view renders unknown kinds. |
+| A reasoning or voice model | Implement `OrchestratorBrain`'s four methods, or add a second consumer of `OrchestrationState`. |
+| A different verification tool | Implement the `CheckResult` shape in `services/checks.py`; the UI renders any `tool`/`outcome`. |
 | A storage backend | Swap the engine in `db.py`; repositories are the only DB consumers. |

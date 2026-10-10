@@ -16,9 +16,10 @@ import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import type { TaskDetail } from '../types'
 import { relativeTime, statusLabel, statusTone } from '../utils/format'
+import OrchestrationPanel from './OrchestrationPanel'
 import ProjectStatePanel from './ProjectStatePanel'
 
-type Tab = 'task' | 'state'
+type Tab = 'task' | 'plan' | 'state'
 
 export default function InspectorPanel() {
   const { tasks, selectedTaskId, selectTask, project } = useWorkspace()
@@ -64,6 +65,15 @@ export default function InspectorPanel() {
             <button
               type="button"
               role="tab"
+              aria-selected={tab === 'plan'}
+              className={`stacked__tab ${tab === 'plan' ? 'stacked__tab--active' : ''}`}
+              onClick={() => setTab('plan')}
+            >
+              Plan
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={tab === 'state'}
               className={`stacked__tab ${tab === 'state' ? 'stacked__tab--active' : ''}`}
               onClick={() => setTab('state')}
@@ -86,6 +96,8 @@ export default function InspectorPanel() {
           </div>
         ) : tab === 'state' ? (
           <ProjectStatePanel projectId={project.id} />
+        ) : tab === 'plan' ? (
+          <OrchestrationPanel projectId={project.id} />
         ) : tasks.length === 0 ? (
           <div className="empty">
             <div className="empty__glyph">◇</div>

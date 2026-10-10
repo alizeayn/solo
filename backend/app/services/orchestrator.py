@@ -22,8 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..adapters.base import AgentEvent, CodingAgentAdapter
 from ..config import Settings
-from ..domain import EventType, Intent, TERMINAL_STATUSES, TaskStatus, TaskType
-from ..models import Task
+from ..domain import (
+    EventType,
+    Intent,
+    PlannedTaskStatus,
+    TERMINAL_STATUSES,
+    TaskStatus,
+    TaskType,
+)
+from ..models import Project, Task
 from ..repositories import (
     ConversationRepository,
     EventRepository,
@@ -31,10 +38,13 @@ from ..repositories import (
     TaskRepository,
 )
 from ..schemas import EventOut, MessageOut, TaskOut
+from .checks import ChecksService
 from .context import build_snapshot, offline_answer
 from .event_bus import EventBus
 from .intent import IntentRouter
-from .project_paths import resolve_project_root
+from .orchestration_state import OrchestrationState, PlannedTask
+from .orchestrator_brain import IntentDecision, OrchestratorBrain
+from .project_paths import ProjectPathError, resolve_project_root
 from .project_store import ProjectStoreService
 
 logger = logging.getLogger(__name__)
@@ -42,6 +52,12 @@ logger = logging.getLogger(__name__)
 
 class TaskConflictError(RuntimeError):
     """Raised when a second modifying task is requested for a busy project."""
+
+
+def _short(text: str, limit: int = 80) -> str:
+    """A one-line label for a queued step."""
+    cleaned = " ".join((text or "").split())
+    return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 1].rstrip()}…"
 
 
 class OrchestratorService:
@@ -54,6 +70,8 @@ class OrchestratorService:
         settings: Settings,
         router: IntentRouter | None = None,
         store: ProjectStoreService | None = None,
+        brain: OrchestratorBrain | None = None,
+        checks: ChecksService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._bus = bus
@@ -61,7 +79,16 @@ class OrchestratorService:
         self._settings = settings
         self._router = router or IntentRouter()
         self._store = store
+        self._brain = brain
+        self._checks = checks
         self._runners: dict[str, asyncio.Task[None]] = {}
+        #: Post-settle work (summary, checks, queue advance) kept off the
+        #: notification path but tracked so shutdown can await it.
+        self._post_tasks: set[asyncio.Task[None]] = set()
+        #: Recent activity per task, used to build a summary when it settles.
+        self._activity: dict[str, list[str]] = {}
+        self._files: dict[str, list[str]] = {}
+        self._summarised: set[str] = set()
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -80,11 +107,30 @@ class OrchestratorService:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._runners.clear()
+
+        post = [task for task in self._post_tasks if not task.done()]
+        for task in post:
+            task.cancel()
+        if post:
+            await asyncio.gather(*post, return_exceptions=True)
+        self._post_tasks.clear()
+
         await self._adapter.stop()
 
     @property
     def adapter_name(self) -> str:
         return self._adapter.name
+
+    def sessions(self) -> list[dict[str, Any]]:
+        """Live coding-agent sessions, when the backend supports them."""
+        getter = getattr(self._adapter, "sessions", None)
+        if not callable(getter):
+            return []
+        try:
+            return list(getter())
+        except Exception:  # noqa: BLE001 - diagnostics must never raise
+            logger.debug("could not read adapter sessions", exc_info=True)
+            return []
 
     async def _mark_stale_tasks_for_recovery(self) -> int:
         async with self._session_factory() as session:
@@ -102,6 +148,7 @@ class OrchestratorService:
         instruction: str,
         conversation_id: str | None = None,
         parent_task_id: str | None = None,
+        plan_id: str | None = None,
     ) -> Task:
         async with self._session_factory() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -122,12 +169,33 @@ class OrchestratorService:
             )
             await session.commit()
 
+        # Every coding task is tracked in the orchestrator's working memory, so
+        # the Plan panel is meaningful even when the LLM planner is disabled.
+        if self._store is not None:
+            state = await self._load_state(project)
+            if plan_id and state.find(plan_id) is not None:
+                state.set_status(plan_id, PlannedTaskStatus.RUNNING, task_id=task.id)
+            else:
+                entry = state.add(
+                    PlannedTask(
+                        title=_short(instruction),
+                        instruction=instruction,
+                        priority=10,
+                        source="user",
+                        status=PlannedTaskStatus.RUNNING.value,
+                        task_id=task.id,
+                    )
+                )
+                plan_id = entry.id
+            state.set_active(task.id, plan_id=plan_id)
+            await self._save_state(project, state)
+
         await self._emit(
             task_id=task.id,
             project_id=project_id,
             type=EventType.TASK_CREATED.value,
             message=f"Coding task created: {instruction.strip()[:160]}",
-            data={"task_type": TaskType.CODING.value},
+            data={"task_type": TaskType.CODING.value, "plan_id": plan_id},
         )
         self._spawn(task.id)
         return task
@@ -179,6 +247,144 @@ class OrchestratorService:
         return True
 
     # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
+    # Orchestration state (see services/orchestration_state.py)
+    # ------------------------------------------------------------------ #
+    async def _load_state(self, project: Project) -> OrchestrationState:
+        raw = self._store.read_orchestration(project) if self._store else None
+        if isinstance(raw, dict):
+            return OrchestrationState.from_dict(raw, project_id=project.id)
+        return OrchestrationState(project_id=project.id)
+
+    async def _save_state(self, project: Project, state: OrchestrationState) -> None:
+        """Persist the working memory and broadcast it to the UI."""
+        if self._store is not None:
+            # File I/O must not stall the event loop; the store is a plain
+            # synchronous writer by design (atomic temp-file replace).
+            ok = await asyncio.to_thread(self._store.write_orchestration, project, state.to_dict())
+            if not ok:
+                logger.warning("could not persist orchestration state for %s", project.id)
+        await self._bus.publish({"channel": "orchestration", "payload": state.summary()})
+
+    async def orchestration_state(self, project_id: str) -> dict:
+        """Public view of the orchestrator's working memory for a project."""
+        async with self._session_factory() as session:
+            project = await ProjectRepository(session).get(project_id)
+        if project is None:
+            raise LookupError("project not found")
+        state = await self._load_state(project)
+        return {"summary": state.summary(), "state": state.to_dict()}
+
+    async def add_orchestration_note(self, project_id: str, text: str) -> dict:
+        """Record a user instruction in the project's working memory."""
+        project = await self._require_project(project_id)
+        state = await self._load_state(project)
+        note = state.add_note(text, task_id=state.active_task_id)
+        await self._save_state(project, state)
+        return note
+
+    async def remove_planned_task(self, project_id: str, plan_id: str) -> bool:
+        project = await self._require_project(project_id)
+        state = await self._load_state(project)
+        if not state.remove(plan_id):
+            return False
+        await self._save_state(project, state)
+        return True
+
+    async def set_planned_task_status(
+        self, project_id: str, plan_id: str, status: str
+    ) -> dict | None:
+        project = await self._require_project(project_id)
+        state = await self._load_state(project)
+        item = state.set_status(plan_id, status)
+        if item is None:
+            return None
+        await self._save_state(project, state)
+        return item.to_dict()
+
+    async def advance_queue(self, project_id: str) -> dict:
+        """Start the next ready queued step now, on user request."""
+        project = await self._require_project(project_id)
+        state = await self._load_state(project)
+        if await self._active_task_for(project_id) is not None:
+            return {"started": False, "reason": "a task is already running"}
+        nxt = state.next_pending()
+        if nxt is None:
+            return {"started": False, "reason": "the queue is empty"}
+        await self._advance_queue(project, state)
+        return {"started": True, "plan_id": nxt.id, "title": nxt.title}
+
+    async def _require_project(self, project_id: str) -> Project:
+        async with self._session_factory() as session:
+            project = await ProjectRepository(session).get(project_id)
+        if project is None:
+            raise LookupError("project not found")
+        return project
+
+    async def plan_instruction(
+        self, *, project_id: str, content: str
+    ) -> dict:
+        """Ask the orchestrator model to decompose an instruction into a plan."""
+        async with self._session_factory() as session:
+            project = await ProjectRepository(session).get(project_id)
+            active = await TaskRepository(session).find_active(project_id)
+        if project is None:
+            raise LookupError("project not found")
+        if self._brain is None:
+            return {"planned": [], "reason": "orchestrator model is not available"}
+        decision = await self._brain.classify(
+            content,
+            has_active_task=active is not None,
+            active_instruction=active.instruction if active else None,
+            active_summary=active.progress_summary if active else None,
+        )
+        if decision is None:
+            return {"planned": [], "reason": "the orchestrator model did not respond"}
+        planned = self._brain.plan_from(decision)
+        if planned:
+            state = await self._load_state(project)
+            state.add_many(planned)
+            await self._save_state(project, state)
+        return {
+            "intent": decision.intent.value,
+            "reason": decision.reason,
+            "planned": [item.to_dict() for item in planned],
+        }
+
+    async def _classify(
+        self, content: str, *, project_id: str, active: Task | None
+    ) -> tuple[Intent, IntentDecision | None]:
+        """Classify a message with the orchestrator model, falling back to rules.
+
+        The deterministic router is always the fallback, so classification never
+        fails: a missing key, a provider outage or an invalid response degrades
+        to the heuristics instead of blocking the user.
+        """
+        decision: IntentDecision | None = None
+        if self._brain is not None and await self._brain.available():
+            queued: list[str] = []
+            if self._store is not None:
+                async with self._session_factory() as session:
+                    project = await ProjectRepository(session).get(project_id)
+                if project is not None:
+                    state = await self._load_state(project)
+                    queued = [
+                        item.title
+                        for item in state.queue
+                        if item.status == PlannedTaskStatus.PENDING.value
+                    ]
+            decision = await self._brain.classify(
+                content,
+                has_active_task=active is not None,
+                active_instruction=active.instruction if active else None,
+                active_summary=active.progress_summary if active else None,
+                queued=queued,
+            )
+        if decision is not None:
+            return decision.intent, decision
+        return self._router.classify(content, has_active_task=active is not None), None
+
+    # ------------------------------------------------------------------ #
     # User message routing
     # ------------------------------------------------------------------ #
     async def handle_user_message(
@@ -217,9 +423,12 @@ class OrchestratorService:
             data={"conversation_id": conversation_id},
         )
 
-        intent = self._router.classify(content, has_active_task=active_task_id is not None)
+        intent, decision = await self._classify(
+            content, project_id=project_id, active=active
+        )
         return await self._dispatch(
             intent=intent,
+            decision=decision,
             project_id=project_id,
             content=content,
             conversation_id=conversation_id,
@@ -234,7 +443,16 @@ class OrchestratorService:
         content: str,
         conversation_id: str,
         active_task_id: str | None,
+        decision: IntentDecision | None = None,
     ) -> dict:
+        project: Project | None = None
+        if self._store is not None:
+            async with self._session_factory() as session:
+                project = await ProjectRepository(session).get(project_id)
+
+        reply: str
+        task_id: str | None = None
+
         if intent is Intent.STOP_ACTIVE_TASK:
             if active_task_id:
                 await self.cancel_task(active_task_id)
@@ -244,9 +462,15 @@ class OrchestratorService:
                     active_task_id,
                 )
             else:
-                reply, task_id = "There is no active task to stop.", None
+                reply = "There is no active task to stop."
 
         elif intent is Intent.STEER_ACTIVE_TASK and active_task_id:
+            if project is not None:
+                # Remember the instruction. Phases 3-5 read these notes to decide
+                # how a late instruction should change the running task.
+                state = await self._load_state(project)
+                state.add_note(content, task_id=active_task_id, applied="steered")
+                await self._save_state(project, state)
             ok = await self.steer_task(active_task_id, content)
             reply = (
                 "Sent that instruction to the active task."
@@ -255,33 +479,29 @@ class OrchestratorService:
             )
             task_id = active_task_id
 
-        elif intent is Intent.START_CODING_TASK and active_task_id is None:
-            try:
-                task = await self.start_coding_task(
-                    project_id=project_id,
-                    instruction=content,
-                    conversation_id=conversation_id,
-                )
-            except TaskConflictError:
+        elif intent in {Intent.START_CODING_TASK, Intent.STEER_ACTIVE_TASK}:
+            if active_task_id is not None:
+                # Never start a second writer against one project. Record the
+                # request instead, so nothing the user asked for is lost.
+                if project is not None:
+                    state = await self._load_state(project)
+                    state.add_note(
+                        content, task_id=active_task_id, kind="deferred_instruction"
+                    )
+                    await self._save_state(project, state)
                 reply, task_id = (
-                    "A coding task is already running. Send it as a follow-up "
-                    "instruction instead.",
+                    "A coding task is already running. I recorded this as a "
+                    "follow-up instruction.",
                     active_task_id,
                 )
             else:
-                reply, task_id = (
-                    f"Started a coding task: {content.strip()[:160]}",
-                    task.id,
+                reply, task_id = await self._start_from_plan(
+                    project=project,
+                    project_id=project_id,
+                    content=content,
+                    conversation_id=conversation_id,
+                    decision=decision,
                 )
-
-        elif intent is Intent.STEER_ACTIVE_TASK:
-            # Steering requested but nothing is running: treat as a new task.
-            task = await self.start_coding_task(
-                project_id=project_id,
-                instruction=content,
-                conversation_id=conversation_id,
-            )
-            reply, task_id = f"Started a coding task: {content.strip()[:160]}", task.id
 
         elif intent is Intent.CHAT_OR_EXPLAIN:
             reply, task_id = await self._answer_question(
@@ -291,10 +511,9 @@ class OrchestratorService:
             )
 
         else:  # NEEDS_CLARIFICATION
-            reply, task_id = (
+            reply = (
                 "I could not tell whether you want an answer or a code change. "
-                "Could you rephrase?",
-                None,
+                "Could you rephrase?"
             )
 
         message = await self._add_message(
@@ -313,7 +532,183 @@ class OrchestratorService:
         await self._sync_project_store(
             project_id, conversation_id=conversation_id
         )
-        return {"intent": intent.value, "message": message, "task_id": task_id}
+        return {
+            "intent": intent.value,
+            "message": message,
+            "task_id": task_id,
+            "classified_by": "orchestrator-model" if decision is not None else "rules",
+        }
+
+    async def _start_from_plan(
+        self,
+        *,
+        project: Project | None,
+        project_id: str,
+        content: str,
+        conversation_id: str,
+        decision: IntentDecision | None,
+    ) -> tuple[str, str | None]:
+        """Start the highest-priority planned step, or a single task from text.
+
+        When the orchestrator model decomposed a compound request, the plan is
+        recorded and its ready step runs first; the rest stay queued and are
+        started in order as each settles.
+        """
+        state: OrchestrationState | None = None
+        planned: list[PlannedTask] = []
+        if project is not None and self._brain is not None and decision is not None:
+            planned = self._brain.plan_from(decision)
+            if planned:
+                state = await self._load_state(project)
+                state.add_many(planned)
+                await self._save_state(project, state)
+
+        first = state.next_pending() if state is not None else None
+        instruction = first.instruction if first is not None else content
+
+        try:
+            task = await self.start_coding_task(
+                project_id=project_id,
+                instruction=instruction,
+                conversation_id=conversation_id,
+                plan_id=first.id if first is not None else None,
+            )
+        except TaskConflictError:
+            return (
+                "A coding task is already running. I recorded this as a "
+                "follow-up instruction.",
+                None,
+            )
+
+        if len(planned) > 1:
+            reply = (
+                f"Started '{first.title if first else instruction[:80]}'. "
+                f"{len(planned) - 1} further step(s) are queued and will run in order."
+            )
+        else:
+            reply = f"Started a coding task: {instruction.strip()[:160]}"
+        return reply, task.id
+
+    async def _active_task_for(self, project_id: str) -> Task | None:
+        async with self._session_factory() as session:
+            return await TaskRepository(session).find_active(project_id)
+
+    async def _advance_queue(self, project: Project, state: OrchestrationState) -> None:
+        """Start the next ready plan step after a successful completion."""
+        if await self._active_task_for(project.id) is not None:
+            return
+        nxt = state.next_pending()
+        if nxt is None:
+            return
+        await self._emit(
+            task_id=None,
+            project_id=project.id,
+            type=EventType.PROGRESS_SUMMARY.value,
+            message=f"Starting the next queued step: {nxt.title}",
+            data={"plan_id": nxt.id, "source": "orchestrator"},
+        )
+        try:
+            task = await self.start_coding_task(
+                project_id=project.id, instruction=nxt.instruction, plan_id=nxt.id
+            )
+        except TaskConflictError:
+            return
+        await self._save_state(project, state)
+
+    async def _after_task_settled(self, project_id: str | None, task_id: str) -> None:
+        """Post-run orchestration: summarise, verify, and advance the plan."""
+        if project_id is None or self._store is None:
+            return
+        async with self._session_factory() as session:
+            project = await ProjectRepository(session).get(project_id)
+            task = await TaskRepository(session).get(task_id)
+        if project is None or task is None:
+            return
+
+        status = TaskStatus(task.status)
+        await self._summarise_task(project, task)
+        await self._run_checks(project, task)
+
+        state = await self._load_state(project)
+        if state.active_task_id == task_id:
+            if state.active_plan_id:
+                state.set_status(
+                    state.active_plan_id,
+                    (
+                        PlannedTaskStatus.DONE
+                        if status is TaskStatus.COMPLETED
+                        else PlannedTaskStatus.FAILED
+                    ),
+                    task_id=task_id,
+                    note=task.result_summary,
+                )
+            state.set_active(None)
+            await self._save_state(project, state)
+
+        if status is TaskStatus.COMPLETED:
+            await self._advance_queue(project, state)
+
+    async def _summarise_task(self, project: Project, task: Task) -> None:
+        """Replace the raw agent text with a concise orchestrator summary."""
+        if task.id in self._summarised:
+            return
+        self._summarised.add(task.id)
+        if len(self._summarised) > 500:
+            self._summarised.clear()
+        if self._brain is None or not await self._brain.available():
+            return
+
+        activity = self._activity.pop(task.id, [])
+        files = self._files.get(task.id, [])
+        summary = await self._brain.summarise(
+            instruction=task.instruction,
+            status=task.status,
+            activity=activity,
+            files_changed=files,
+            errors=[task.error] if task.error else [],
+            deterministic_summary=task.result_summary,
+        )
+        if not summary:
+            return
+
+        async with self._session_factory() as session:
+            repo = TaskRepository(session)
+            fresh = await repo.get(task.id)
+            if fresh is None:
+                return
+            await repo.update(fresh, result_summary=summary)
+            await session.commit()
+            payload = TaskOut.model_validate(fresh).model_dump(mode="json")
+        await self._bus.publish({"channel": "task", "payload": payload})
+        await self._emit(
+            task_id=task.id,
+            project_id=project.id,
+            type=EventType.PROGRESS_SUMMARY.value,
+            message=f"Summary: {summary}",
+            data={"orchestrated": True, "source": "orchestrator-model"},
+        )
+
+    async def _run_checks(self, project: Project, task: Task) -> None:
+        """Run static checks over the files the agent changed."""
+        if self._checks is None or not self._settings.checks_after_task:
+            return
+        if not self._checks.available():
+            return
+        try:
+            root = resolve_project_root(self._settings, project)
+        except ProjectPathError:  # pragma: no cover - tampered record
+            return
+        result = await self._checks.run_for_project(
+            root, changed_files=self._files.get(task.id, [])
+        )
+        await self._emit(
+            task_id=task.id,
+            project_id=project.id,
+            type=EventType.CHECK_RESULT.value,
+            message=result.summary,
+            data=result.to_dict(),
+        )
+        await self._sync_project_store(project.id, task_id=task.id)
 
     async def _answer_question(
         self, *, project_id: str, content: str, conversation_id: str
@@ -326,7 +721,14 @@ class OrchestratorService:
                 raise LookupError("project not found")
             root = resolve_project_root(self._settings, project)
             snapshot = await build_snapshot(session, project, root)
-            answer = offline_answer(snapshot, content)
+            answer: str | None = None
+            if self._brain is not None and await self._brain.available():
+                answer = await self._brain.answer_question(
+                    question=content, snapshot_text=snapshot.to_prompt_text()
+                )
+            if not answer:
+                # Deterministic fallback: Solo answers from the snapshot alone.
+                answer = offline_answer(snapshot, content)
             task = await TaskRepository(session).create(
                 project_id=project_id,
                 instruction=content,
@@ -427,6 +829,7 @@ class OrchestratorService:
         self, task_id: str, project_id: str, event: AgentEvent
     ) -> None:
         """Persist side effects of an adapter event, then broadcast it."""
+        self._remember_activity(task_id, event)
         async with self._session_factory() as session:
             repo = TaskRepository(session)
             if event.type == EventType.FILE_CHANGED.value:
@@ -454,6 +857,20 @@ class OrchestratorService:
     # ------------------------------------------------------------------ #
     # Persistence & broadcast helpers
     # ------------------------------------------------------------------ #
+    def _remember_activity(self, task_id: str, event: AgentEvent) -> None:
+        """Keep a bounded trace of a run for the orchestrator's summary."""
+        bucket = self._activity.setdefault(task_id, [])
+        bucket.append(f"{event.type}: {event.message}")
+        if len(bucket) > 60:
+            del bucket[:-60]
+        if event.type == EventType.FILE_CHANGED.value:
+            path = event.data.get("path")
+            if path:
+                files = self._files.setdefault(task_id, [])
+                entry = str(path)
+                if entry not in files:
+                    files.append(entry)
+
     async def _sync_project_store(
         self,
         project_id: str | None,
@@ -554,6 +971,17 @@ class OrchestratorService:
             message=f"Task status: {status.value}",
             data={"status": status.value},
         )
+
+        if status in TERMINAL_STATUSES:
+            # Summaries, static checks and queue advancement are enhancements:
+            # they run after the user is told the task finished, never in front
+            # of the notification.
+            post = asyncio.create_task(
+                self._after_task_settled(project_id, task_id),
+                name=f"post-settle-{task_id[:8]}",
+            )
+            self._post_tasks.add(post)
+            post.add_done_callback(self._post_tasks.discard)
 
     async def _add_message(
         self,

@@ -1193,3 +1193,234 @@ textarea {
   max-height: 240px;
   overflow: auto;
 }
+
+/* ------------------------------------------------------------------ */
+/* Settings shell (tabbed)                                             */
+/* ------------------------------------------------------------------ */
+.settings-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-shell__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-shell__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex: none;
+}
+
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  white-space: nowrap;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.settings-tab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.settings-tab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.settings-tab__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-tab__hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.settings-shell__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 22px;
+}
+
+.settings-shell__foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: none;
+}
+
+.settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ */
+/* Model picker                                                        */
+/* ------------------------------------------------------------------ */
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.model-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.model-list__item:hover {
+  background: var(--surface-2);
+}
+
+.model-list__item--selected {
+  background: var(--accent-soft);
+}
+
+.model-list__id {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-list__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Checks                                                              */
+/* ------------------------------------------------------------------ */
+.check-card {
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.check-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.check-card__summary {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.diagnostics__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.diagnostics__where {
+  font-size: 11px;
+  color: var(--accent-strong);
+}
+
+.diagnostics__message {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Plan queue                                                          */
+/* ------------------------------------------------------------------ */
+.plan-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-item__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-item__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.plan-item__instruction {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

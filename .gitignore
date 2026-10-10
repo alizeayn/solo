@@ -33,3 +33,6 @@ Thumbs.db
 
 # ---- Build / deploy artifacts kept out of VCS ----
 *.log
+
+# Locally installed tooling (Pi Coding Agent)
+.tools/

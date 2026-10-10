@@ -23,9 +23,11 @@ import {
   isActive,
   type AppEvent,
   type AppSettings,
+  type CheckResult,
   type ConnectionState,
   type Message,
   type MessageDispatchResult,
+  type OrchestrationView,
   type Project,
   type Task,
   type WsEnvelope,
@@ -46,6 +48,10 @@ interface WorkspaceContextValue {
   events: AppEvent[]
   messages: Message[]
   settings: AppSettings | null
+  /** Live orchestrator working memory for the selected project. */
+  orchestration: OrchestrationView['summary'] | null
+  /** Most recent Pyright run, pushed as a `check.result` event. */
+  lastCheck: CheckResult | null
   connection: ConnectionState
   busy: boolean
   error: string | null
@@ -97,6 +103,8 @@ export function WorkspaceProvider({
   const [events, setEvents] = useState<AppEvent[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [orchestration, setOrchestration] = useState<OrchestrationView['summary'] | null>(null)
+  const [lastCheck, setLastCheck] = useState<CheckResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -233,6 +241,9 @@ export function WorkspaceProvider({
     }
     if (envelope.channel === 'event') {
       const event = envelope.payload as unknown as AppEvent
+      if (event.type === 'check.result') {
+        setLastCheck(event.data as unknown as CheckResult)
+      }
       if (event.task_id === selectedTaskIdRef.current) {
         setEvents((previous) => appendUnique(previous, event))
       }
@@ -241,6 +252,10 @@ export function WorkspaceProvider({
     if (envelope.channel === 'message') {
       const message = envelope.payload as unknown as Message
       setMessages((previous) => appendUnique(previous, message))
+      return
+    }
+    if (envelope.channel === 'orchestration') {
+      setOrchestration(envelope.payload as unknown as OrchestrationView['summary'])
     }
   }, [])
 
@@ -322,6 +337,8 @@ export function WorkspaceProvider({
     events,
     messages,
     settings,
+    orchestration,
+    lastCheck,
     connection,
     busy,
     error,

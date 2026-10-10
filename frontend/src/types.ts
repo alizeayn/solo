@@ -49,7 +49,11 @@ export interface AppSettings {
   pi_provider: string | null
   pi_model: string | null
   pi_base_url: string | null
+  pi_thinking_level: string | null
+  pi_approve_project: boolean
   pi_reuse_openrouter_key: boolean
+  orchestrator_enabled: boolean
+  checks_enabled: boolean
   voice_enabled: boolean
   progress_speech_enabled: boolean
   pi_version: string | null
@@ -65,7 +69,11 @@ export type SettingsPatch = Partial<{
   pi_provider: string
   pi_model: string
   pi_base_url: string
+  pi_thinking_level: string
+  pi_approve_project: boolean
   pi_reuse_openrouter_key: boolean
+  orchestrator_enabled: boolean
+  checks_enabled: boolean
   voice_enabled: boolean
   progress_speech_enabled: boolean
 }>
@@ -73,6 +81,190 @@ export type SettingsPatch = Partial<{
 export interface ConnectionTestResult {
   ok: boolean
   message: string
+  detail: string | null
+  /** verified | configured | not_configured | failed | skipped */
+  state?: string | null
+  provider?: string | null
+  model?: string | null
+  latency_ms?: number | null
+}
+
+/* ------------------------------------------------------------------ */
+/* Pi Agent                                                            */
+/* ------------------------------------------------------------------ */
+export interface PiRuntime {
+  available: boolean
+  version: string | null
+  executable: string | null
+  agent_dir: string | null
+  detail: string | null
+}
+
+export interface PiStatus {
+  runtime: PiRuntime
+  /** `pi` or `mock` — which backend coding tasks will use. */
+  backend: string
+  provider: string | null
+  model: string | null
+  thinking_level: string | null
+  approve_project: boolean
+  minimal_harness: boolean
+  agent_dir: string | null
+  auth_file: string | null
+  configured_providers: string[]
+  sessions: PiSession[]
+}
+
+export interface PiSession {
+  cwd: string
+  running: boolean
+  busy: boolean
+  pid: number | null
+  provider: string | null
+  model: string | null
+  uptime: number
+  last_stderr: string
+}
+
+export interface PiProvider {
+  id: string
+  label: string
+  env_var: string | null
+  configured: boolean
+  auth_type: string | null
+  /** saved | environment | oauth | none */
+  source: string
+  model_count: number
+  model_count_known: boolean
+  in_catalog: boolean
+}
+
+export interface PiModel {
+  id: string
+  name: string
+  provider: string
+  reasoning: boolean
+  context_window: number | null
+  max_tokens: number | null
+  input_modalities: string[]
+  cost: Record<string, number> | null
+}
+
+export interface PiAuthStatus {
+  provider: string
+  status: string
+  ready: boolean
+  auth_type: string | null
+  reason: string | null
+  detail: string | null
+}
+
+/* ------------------------------------------------------------------ */
+/* Orchestrator                                                        */
+/* ------------------------------------------------------------------ */
+export interface OrchestratorStatus {
+  enabled: boolean
+  configured: boolean
+  has_key: boolean
+  model: string | null
+  key_masked: string | null
+  call_count: number
+  failure_count: number
+  last_error: string | null
+  last_latency_ms: number | null
+  last_model: string | null
+}
+
+export interface OpenRouterModel {
+  id: string
+  name: string
+  context_length: number | null
+  supports_structured_output: boolean
+  pricing: Record<string, unknown>
+}
+
+/* ------------------------------------------------------------------ */
+/* Orchestration state                                                 */
+/* ------------------------------------------------------------------ */
+export interface PlannedTask {
+  id: string
+  title: string
+  instruction: string
+  priority: number
+  depends_on: string[]
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+  source: string
+  task_id: string | null
+  note: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface OrchestrationView {
+  summary: {
+    version?: number
+    project_id?: string
+    revision?: number
+    active_task_id?: string | null
+    active_plan_id?: string | null
+    queue_size?: number
+    status_counts?: Record<string, number>
+    pending_notes?: number
+    updated_at?: string
+    next?: PlannedTask | null
+  }
+  state: {
+    version?: number
+    project_id?: string
+    revision?: number
+    active_task_id?: string | null
+    active_plan_id?: string | null
+    queue?: PlannedTask[]
+    notes?: OrchestrationNote[]
+    updated_at?: string
+  }
+}
+
+export interface OrchestrationNote {
+  id: string
+  text: string
+  kind: string
+  task_id: string | null
+  applied: string | null
+  created_at: string
+}
+
+/* ------------------------------------------------------------------ */
+/* Static checks                                                       */
+/* ------------------------------------------------------------------ */
+export interface Diagnostic {
+  file: string
+  line: number
+  column: number
+  severity: string
+  message: string
+  rule: string | null
+}
+
+export interface CheckResult {
+  tool: string
+  outcome: 'passed' | 'failed' | 'error' | 'skipped'
+  summary: string
+  error_count: number
+  warning_count: number
+  files_checked: number
+  duration_ms: number
+  command: string | null
+  output: string | null
+  passed: boolean
+  diagnostics: Diagnostic[]
+}
+
+export interface ChecksStatus {
+  enabled: boolean
+  available: boolean
+  tool: string
+  executable: string | null
   detail: string | null
 }
 
@@ -246,7 +438,7 @@ export interface MessageDispatchResult {
 export type ConnectionState = 'connecting' | 'open' | 'closed'
 
 export interface WsEnvelope {
-  channel: 'event' | 'task' | 'message' | 'ready' | 'error'
+  channel: 'event' | 'task' | 'message' | 'orchestration' | 'ready' | 'error'
   payload: Record<string, unknown>
 }
 

@@ -208,6 +208,10 @@ class StorePaths:
         return self.state_dir / "tree.json"
 
     @property
+    def orchestration(self) -> Path:
+        return self.state_dir / "orchestration.json"
+
+    @property
     def memory_dir(self) -> Path:
         return self.meta / "memory"
 
@@ -496,6 +500,14 @@ class ProjectStoreService:
         return _read_json(
             root / self._settings.metadata_dir_name / "project.json"
         )
+
+    # -- orchestration state --------------------------------------------- #
+    def read_orchestration(self, project: Project) -> dict | None:
+        """The orchestrator's working memory for this project."""
+        return _read_json(self.paths(project).orchestration)
+
+    def write_orchestration(self, project: Project, payload: dict) -> bool:
+        return _safe_write_json(self.paths(project).orchestration, payload)
 
     def read_config(self, project: Project) -> dict:
         stored = _read_json(self.paths(project).config, {}) or {}

@@ -32,10 +32,41 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     log_level: str = "INFO"
 
-    # Coding-agent backend: "mock" (Phase 1) or "pi" (Phase 2).
-    agent_backend: str = "mock"
+    # Coding-agent backend: "auto" (Pi when installed, otherwise the
+    # simulator), "pi" (require Pi), or "mock".
+    agent_backend: str = "auto"
     # Seconds between simulated steps in the mock coding agent. Tests set 0.
     mock_step_delay: float = 0.35
+
+    # --- Pi Agent ---
+    pi_executable: str = "pi"
+    # Optional override for Pi's agent directory (PI_CODING_AGENT_DIR). Leave
+    # empty to reuse the user's existing Pi installation, which also preserves
+    # their model catalog. A fresh directory has NO models (verified), so only
+    # set this if you intend to run 'pi update --models' against it.
+    pi_agent_dir: str | None = None
+    # Trust project-local Pi resources (.pi/settings.json, extensions, skills).
+    # False maps to --no-approve: predictable and safe for a non-interactive run.
+    pi_approve_project: bool = False
+    # Disable extensions/skills/templates/MCP so the harness is reproducible and
+    # produces no unanswerable extension UI requests.
+    pi_minimal_harness: bool = True
+    # Wall-clock limit for one coding task.
+    pi_run_timeout_seconds: int = 1800
+
+    # --- Orchestrator (OpenRouter) ---
+    # Reasoning/intent model used for classification, prioritisation and
+    # summaries. It is only ever invoked when a key and model are configured.
+    orchestrator_enabled: bool = True
+    orchestrator_timeout_seconds: float = 45.0
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # --- Static checks (Pyright) ---
+    checks_enabled: bool = True
+    pyright_executable: str = "pyright"
+    pyright_timeout_seconds: int = 180
+    # Run checks automatically after a coding task settles.
+    checks_after_task: bool = True
 
     # --- Storage ---
     # Root directory for the SQLite DB, encrypted secrets and workspaces.

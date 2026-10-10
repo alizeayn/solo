@@ -77,7 +77,9 @@ class EventType(str, Enum):
     TOOL_FINISHED = "tool.finished"
     FILE_CHANGED = "file.changed"
     TEST_RESULT = "test.result"
+    CHECK_RESULT = "check.result"
     PROGRESS_SUMMARY = "progress.summary"
+    STATE_UPDATED = "state.updated"
     ERROR = "error"
     MESSAGE_RECEIVED = "message.received"
     ASSISTANT_MESSAGE = "assistant.message"
@@ -113,6 +115,25 @@ class MemoryKind(str, Enum):
     TODO = "todo"
 
 
+class PlannedTaskStatus(str, Enum):
+    """Lifecycle of a queued unit of orchestrator work."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class CheckOutcome(str, Enum):
+    """Result of a static-analysis run."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
 #: Settings keys recognised by the application (grouped for the UI).
 SECRET_SETTING_KEYS: frozenset[str] = frozenset(
     {
@@ -129,7 +150,11 @@ PLAIN_SETTING_KEYS: frozenset[str] = frozenset(
         "pi_provider",
         "pi_model",
         "pi_base_url",
+        "pi_thinking_level",
+        "pi_approve_project",
         "pi_reuse_openrouter_key",
+        "orchestrator_enabled",
+        "checks_enabled",
         "voice_enabled",
         "progress_speech_enabled",
     }

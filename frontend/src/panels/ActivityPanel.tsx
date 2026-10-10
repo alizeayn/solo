@@ -9,6 +9,7 @@
 import { useMemo } from 'react'
 
 import { useWorkspace } from '../state/WorkspaceProvider'
+import type { CheckResult } from '../types'
 import {
   clockTime,
   eventGlyph,
@@ -19,7 +20,7 @@ import {
 } from '../utils/format'
 
 export default function ActivityPanel() {
-  const { selectedTask, activeTask, events } = useWorkspace()
+  const { selectedTask, activeTask, events, orchestration } = useWorkspace()
   const task = selectedTask ?? activeTask
 
   const changedFiles = useMemo(() => {
@@ -38,11 +39,21 @@ export default function ActivityPanel() {
     [events],
   )
 
+  const check = useMemo(() => {
+    const runs = events.filter((event) => event.type === 'check.result')
+    return runs.length ? (runs[runs.length - 1].data as unknown as CheckResult) : null
+  }, [events])
+
   return (
     <div className="panel">
       <div className="panel__bar">
         <span className="panel__bar-title">Coding Agent Activity</span>
         <span className="header__spacer" />
+        {orchestration?.queue_size ? (
+          <span className="pill pill--neutral" title="Steps queued by the Orchestrator">
+            {orchestration.queue_size} queued
+          </span>
+        ) : null}
         {task && (
           <span className={`pill pill--${statusTone(task.status)}`}>
             {statusLabel(task.status)}
@@ -99,6 +110,53 @@ export default function ActivityPanel() {
                   </li>
                 ))}
               </ul>
+            </>
+          )}
+
+          {check && (
+            <>
+              <div className="section__title" style={{ padding: '12px 12px 0' }}>
+                Static checks
+              </div>
+              <div className="check-card">
+                <div className="check-card__head">
+                  <span
+                    className={`pill pill--${
+                      check.outcome === 'passed'
+                        ? 'success'
+                        : check.outcome === 'failed'
+                          ? 'danger'
+                          : check.outcome === 'skipped'
+                            ? 'neutral'
+                            : 'warning'
+                    }`}
+                  >
+                    {check.tool} · {check.outcome}
+                  </span>
+                  <span className="hint">
+                    {check.files_checked} file(s) · {check.duration_ms} ms
+                  </span>
+                </div>
+                <p className="check-card__summary">{check.summary}</p>
+                {check.diagnostics.length > 0 && (
+                  <ul className="diagnostics">
+                    {check.diagnostics.slice(0, 12).map((item, index) => (
+                      <li key={`${item.file}:${item.line}:${index}`} className="diagnostics__item">
+                        <span className="diagnostics__where mono">
+                          {item.file}:{item.line}:{item.column}
+                        </span>
+                        <span className="diagnostics__message">{item.message}</span>
+                        {item.rule && <span className="hint">{item.rule}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {check.diagnostics.length > 12 && (
+                  <p className="hint">
+                    Showing 12 of {check.diagnostics.length} diagnostics.
+                  </p>
+                )}
+              </div>
             </>
           )}
 

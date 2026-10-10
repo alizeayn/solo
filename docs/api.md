@@ -14,6 +14,62 @@ cross-origin `Origin` header are rejected with `403`.
 
 ---
 
+## Pi Agent configuration
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/pi/status` | Runtime, backend, saved provider/model, live sessions |
+| `GET` | `/api/pi/providers` | Providers known to Pi plus a curated fallback list |
+| `GET` | `/api/pi/models?provider=&refresh=` | Pi's resolved catalog |
+| `POST` | `/api/pi/models/refresh` | Runs `pi update --models` |
+| `GET` | `/api/pi/providers/{id}/auth` | `{ready, reason, auth_type}` — never the credential |
+| `PUT` | `/api/pi/providers/{id}/credential` | `{api_key}` → writes Pi's `auth.json` (mode `600`) |
+| `DELETE` | `/api/pi/providers/{id}/credential` | Removes the stored credential |
+| `POST` | `/api/pi/providers/{id}/credential/from-orchestrator` | Copies Solo's OpenRouter key, so it is entered once |
+| `POST` | `/api/pi/providers/{id}/test?model=&deep=` | `deep=false` checks presence; `deep=true` makes a real request |
+
+```json
+{"ok": true, "state": "verified", "message": "opencode-go / claude-haiku-5-5 answered a real request successfully.", "model": "claude-haiku-5-5", "latency_ms": 1840}
+```
+
+`state` is `not_configured`, `configured`, `verified` or `failed`. A provider is
+never reported `verified` unless a real request succeeded.
+
+---
+
+## Orchestrator (OpenRouter)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/orchestrator/status` | Enabled, configured, masked key, call/failure counts, last error and latency |
+| `PUT` | `/api/orchestrator/config` | `{model?, enabled?}` |
+| `GET` | `/api/orchestrator/models?search=` | OpenRouter's catalog |
+| `POST` | `/api/orchestrator/test?model=&deep=` | `deep=true` runs one real completion → `verified` |
+
+---
+
+## Orchestration state and checks
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/projects/{id}/orchestration` | The plan queue, notes and summary |
+| `POST` | `/api/projects/{id}/orchestration/plan` | `{instruction}` — decompose into a plan |
+| `POST` | `/api/projects/{id}/orchestration/notes` | Record an instruction without executing it |
+| `POST` | `/api/projects/{id}/orchestration/queue/{plan_id}/skip` | Mark a step skipped |
+| `DELETE` | `/api/projects/{id}/orchestration/queue/{plan_id}` | Remove a queued step |
+| `POST` | `/api/projects/{id}/orchestration/advance` | Start the next ready step now |
+| `GET` | `/api/checks/status` | Whether Pyright is available |
+| `POST` | `/api/projects/{id}/checks` | Run Pyright now; returns diagnostics |
+
+```json
+{
+  "summary": {"queue_size": 2, "status_counts": {"done": 1, "pending": 1}, "pending_notes": 0, "next": {"title": "Write tests"}},
+  "state": {"project_id": "…", "active_task_id": null, "queue": [], "notes": []}
+}
+```
+
+---
+
 ## Health
 
 ### `GET /api/health`
@@ -334,9 +390,11 @@ succeeded.
 
 ### Event types
 
-`task.created`, `task.status_changed`, `run.started`, `run.finished`,
-`tool.started`, `tool.updated`, `tool.finished`, `file.changed`, `test.result`,
-`progress.summary`, `error`, `message.received`, `assistant.message`.
+| `file.changed`, `test.result`, `check.result`, `progress.summary`, `state.updated`, `error`, `message.received`, `assistant.message`.
+
+Events carry a `data` payload whose shape depends on `type` — for example
+`file.changed` has `{path, change_type, tool}` and `check.result` has the full
+Pyright result including `diagnostics`.
 
 ```json
 {
@@ -370,6 +428,7 @@ Every frame is an envelope:
 | `event` | an `EventOut` object |
 | `task` | a `TaskOut` object (status/result changed) |
 | `message` | a `MessageOut` object (assistant messages) |
+| `orchestration` | the current `summary` of the project's orchestration state |
 
 The bus drops the oldest frame for a slow subscriber rather than blocking the
 publisher; clients can always re-fetch over REST, because events are persisted

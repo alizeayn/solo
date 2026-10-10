@@ -10,6 +10,8 @@ import type {
   AppEvent,
   AppSettings,
   AuthStatus,
+  CheckResult,
+  ChecksStatus,
   ConnectionTestResult,
   FsListing,
   Health,
@@ -17,6 +19,13 @@ import type {
   MemoryEntry,
   Message,
   MessageDispatchResult,
+  OpenRouterModel,
+  OrchestrationView,
+  OrchestratorStatus,
+  PiAuthStatus,
+  PiModel,
+  PiProvider,
+  PiStatus,
   Project,
   ProjectConfig,
   ProjectSummary,
@@ -169,6 +178,109 @@ export const api = {
       request<FsListing>(
         `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`,
       ),
+  },
+
+  pi: {
+    status: () => request<PiStatus>('/api/pi/status'),
+    providers: () => request<PiProvider[]>('/api/pi/providers'),
+    models: (provider?: string, refresh = false) => {
+      const params = new URLSearchParams()
+      if (provider) params.set('provider', provider)
+      if (refresh) params.set('refresh', 'true')
+      const query = params.toString()
+      return request<PiModel[]>(`/api/pi/models${query ? `?${query}` : ''}`)
+    },
+    refreshModels: () =>
+      request<{ ok: boolean; message: string; output: string | null }>(
+        '/api/pi/models/refresh',
+        { method: 'POST' },
+      ),
+    auth: (provider: string) =>
+      request<PiAuthStatus>(`/api/pi/providers/${encodeURIComponent(provider)}/auth`),
+    saveCredential: (provider: string, apiKey: string) =>
+      request<PiAuthStatus>(
+        `/api/pi/providers/${encodeURIComponent(provider)}/credential`,
+        { method: 'PUT', body: JSON.stringify({ api_key: apiKey }) },
+      ),
+    deleteCredential: (provider: string) =>
+      request<PiAuthStatus>(
+        `/api/pi/providers/${encodeURIComponent(provider)}/credential`,
+        { method: 'DELETE' },
+      ),
+    credentialFromOrchestrator: (provider: string) =>
+      request<PiAuthStatus>(
+        `/api/pi/providers/${encodeURIComponent(provider)}/credential/from-orchestrator`,
+        { method: 'POST' },
+      ),
+    test: (provider: string, options: { model?: string; deep?: boolean } = {}) => {
+      const params = new URLSearchParams()
+      if (options.model) params.set('model', options.model)
+      if (options.deep) params.set('deep', 'true')
+      const query = params.toString()
+      return request<ConnectionTestResult>(
+        `/api/pi/providers/${encodeURIComponent(provider)}/test${query ? `?${query}` : ''}`,
+        { method: 'POST' },
+      )
+    },
+  },
+
+  orchestrator: {
+    status: () => request<OrchestratorStatus>('/api/orchestrator/status'),
+    config: (patch: { model?: string; enabled?: boolean }) =>
+      request<OrchestratorStatus>('/api/orchestrator/config', {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      }),
+    models: (search?: string) =>
+      request<OpenRouterModel[]>(
+        `/api/orchestrator/models${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+      ),
+    test: (options: { model?: string; deep?: boolean } = {}) => {
+      const params = new URLSearchParams()
+      if (options.model) params.set('model', options.model)
+      if (options.deep === false) params.set('deep', 'false')
+      const query = params.toString()
+      return request<ConnectionTestResult>(
+        `/api/orchestrator/test${query ? `?${query}` : ''}`,
+        { method: 'POST' },
+      )
+    },
+  },
+
+  orchestration: {
+    get: (projectId: string) =>
+      request<OrchestrationView>(`/api/projects/${projectId}/orchestration`),
+    plan: (projectId: string, instruction: string) =>
+      request<OrchestrationView>(`/api/projects/${projectId}/orchestration/plan`, {
+        method: 'POST',
+        body: JSON.stringify({ instruction }),
+      }),
+    note: (projectId: string, instruction: string) =>
+      request<OrchestrationView>(`/api/projects/${projectId}/orchestration/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ instruction }),
+      }),
+    skip: (projectId: string, planId: string) =>
+      request<OrchestrationView>(
+        `/api/projects/${projectId}/orchestration/queue/${planId}/skip`,
+        { method: 'POST' },
+      ),
+    remove: (projectId: string, planId: string) =>
+      request<OrchestrationView>(
+        `/api/projects/${projectId}/orchestration/queue/${planId}`,
+        { method: 'DELETE' },
+      ),
+    advance: (projectId: string) =>
+      request<{ started: boolean; reason?: string; title?: string }>(
+        `/api/projects/${projectId}/orchestration/advance`,
+        { method: 'POST' },
+      ),
+  },
+
+  checks: {
+    status: () => request<ChecksStatus>('/api/checks/status'),
+    run: (projectId: string) =>
+      request<CheckResult>(`/api/projects/${projectId}/checks`, { method: 'POST' }),
   },
 
   tasks: {

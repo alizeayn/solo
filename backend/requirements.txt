@@ -9,5 +9,8 @@ pydantic-settings==2.7.0
 python-multipart==0.0.20
 cryptography==44.0.0
 httpx==0.28.1
+# Static type checking used by the verification harness. It is optional at
+# runtime: Solo degrades to "checks skipped" if the executable is missing.
+pyright==1.1.414
 
 # --- Test / dev only (installed via requirements-dev.txt) ---

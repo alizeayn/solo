@@ -20,6 +20,9 @@ from .api import auth as auth_api
 from .api import fs as fs_api
 from .api import health as health_api
 from .api import messages as messages_api
+from .api import orchestration as orchestration_api
+from .api import orchestrator as orchestrator_api
+from .api import pi as pi_api
 from .api import projects as projects_api
 from .api import settings as settings_api
 from .api import tasks as tasks_api
@@ -118,6 +121,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(fs_api.router)
     app.include_router(tasks_api.router)
     app.include_router(messages_api.router)
+    app.include_router(pi_api.router)
+    app.include_router(orchestrator_api.router)
+    app.include_router(orchestration_api.router)
 
     _install_middleware(app, settings)
     _mount_frontend(app, settings)

@@ -3,18 +3,25 @@
 **A local-first, voice-first AI workspace for working on real projects with a
 coding agent** — from the browser, without living in a terminal.
 
-> **Status: Phase 1 complete.** The application shell, the project model and the
-> full task pipeline are implemented, tested and deployable. The coding agent is
-> a **deterministic simulator** in this phase: it emits realistic progress
-> events but does not modify files. Real Pi RPC, OpenRouter and ElevenLabs voice
-> arrive in later phases — see [Roadmap](#roadmap).
+> **Status: Phase 2 complete.** Solo now drives the real **Pi Agent** over its
+> RPC protocol: a coding task submitted through Chat is executed inside the
+> opened project, real files are created and modified, and the execution is
+> streamed into the workspace. **Pyright** verifies the changes, and an
+> **OpenRouter** model acts as the Orchestrator for intent detection, planning,
+> prioritisation, state management and summaries. Both are configured entirely
+> from the Workspace Settings UI.
+>
+> Voice (Phase 4) and spoken progress (Phase 5) are not implemented yet; the
+> controls are labelled rather than pretending to work.
 
 ---
 
 ## Table of contents
 
 - [What Solo does](#what-solo-does)
+- [How a coding task works](#how-a-coding-task-works)
 - [Quick start](#quick-start)
+- [Configuring the agents](#configuring-the-agents)
 - [Create, Open and Import](#create-open-and-import)
 - [Project state on disk](#project-state-on-disk)
 - [Configuration](#configuration)
@@ -51,10 +58,65 @@ everything in a folder you can read.
 | Live task events over WebSocket; panel layout persistence | ✅ |
 | Question vs. steer vs. stop vs. new-task routing | ✅ |
 | Restart recovery: interrupted tasks become `RECOVERY_REQUIRED` | ✅ |
-| Real Pi RPC subprocess | 🔜 Phase 2 |
-| OpenRouter summaries, routing and project Q&A | 🔜 Phase 3 |
+| **Real Pi Agent execution** via RPC (files are actually created/modified) | ✅ |
+| **Pyright** static checks after each task, with diagnostics in the UI | ✅ |
+| **Orchestrator model** (OpenRouter) for intent, planning, summaries | ✅ |
+| **Pi configured from Settings**: provider, credential, models, verification | ✅ |
+| **Orchestrator configured from Settings**: key, models, verification | ✅ |
+| Prioritised task queue with dependencies and mid-run instruction capture | ✅ |
 | ElevenLabs live voice | 🔜 Phase 4 |
 | Spoken progress announcements | 🔜 Phase 5 |
+
+---
+
+## How a coding task works
+
+```
+  Chat message
+      │
+      ▼
+  Orchestrator ──┬── OpenRouter model  (intent, planning, priorities, summaries)
+      │          └── deterministic rules (always available as a fallback)
+      ▼
+  Task queue  (.solo/state/orchestration.json)
+      │
+      ▼
+  Pi Agent subprocess  ──►  pi --mode rpc   (cwd = the opened project)
+      │                        │
+      │                        ├─ read / write / edit / bash tools
+      │                        └─ JSONL events on stdout
+      ▼
+  Normalised events  ──►  SQLite + WebSocket + .solo/ state store
+      │
+      ▼
+  Workspace  (Conversation · Coding Agent Activity · Inspector)
+      │
+      ▼
+  Pyright  ──►  check.result  ──►  Activity panel
+```
+
+Concretely, for *"Create a file in this folder, add a new module, and write a
+Hello World example in it"*:
+
+1. The message is classified. With an OpenRouter key configured, the model
+decides the intent and decomposes a compound request into an ordered plan;
+otherwise deterministic rules are used, so nothing blocks without a key.
+2. The plan is persisted to the project's state store and the first ready step
+is started.
+3. Solo launches (or reuses) a **long-lived `pi --mode rpc` process whose working
+directory is the opened project**, and sends the instruction.
+4. Pi calls its `write`/`edit` tools. **The files are really created.** Solo
+translates Pi's `tool_execution_*` events into `file.changed`, `tool.*`,
+`test.result`, `progress.summary` and `assistant.message` events.
+5. Each event is persisted, broadcast over the WebSocket, and mirrored into
+`.solo/tasks/<id>.json`. The Activity panel shows the timeline, changed files
+and progress; the Inspector shows the plan and the full state tree.
+6. When the run settles, the Orchestrator writes a concise summary (when
+configured), Pyright checks the changed Python files, and the next queued step
+starts automatically.
+
+A follow-up instruction sent while Pi is working is delivered through Pi's own
+steering mechanism and is also recorded in the project's working memory.
 
 ---
 
@@ -68,7 +130,8 @@ everything in a folder you can read.
 | **Docker** | Docker Engine + Compose v2 |
 
 You do **not** need an API key to install and explore Solo. Credentials are
-optional and are entered later in Settings.
+optional and are entered later in Settings. Pi is installed automatically when
+missing (locally, without sudo).
 
 ### One command
 
@@ -249,7 +312,14 @@ API keys in this file.**
 | `MAX_UPLOAD_MB` | `200` | ZIP upload limit |
 | `MAX_ZIP_ENTRIES` / `MAX_UNCOMPRESSED_MB` | `20000` / `2048` | Extraction guards |
 | `LOG_LEVEL` | `INFO` | `DEBUG`…`ERROR` (secrets stay redacted) |
-| `AGENT_BACKEND` | `mock` | `mock` now; `pi` from Phase 2 |
+| `AGENT_BACKEND` | `auto` | `auto` uses Pi when available, else the simulator |
+| `PI_EXECUTABLE` | `pi` | Path to the Pi CLI (written by the installer when installed locally) |
+| `PI_RUN_TIMEOUT_SECONDS` | `1800` | Wall-clock limit for one coding task |
+| `PI_APPROVE_PROJECT` | `false` | Trust project-local `.pi/` resources |
+| `PI_AGENT_DIR` | *(empty)* | Override Pi's agent directory. **Leave empty**: a fresh directory has no model catalog |
+| `ORCHESTRATOR_ENABLED` | `true` | Use the OpenRouter model for planning and summaries |
+| `CHECKS_ENABLED` | `true` | Run Pyright after a task |
+| `CHECKS_AFTER_TASK` | `true` | Automatically check the changed files |
 | `METADATA_DIR_NAME` | `.solo` | Name of the per-project state folder |
 | `PROJECT_ROOTS` | *(empty)* | Extra roots Open Project may read (`:`-separated) |
 | `ALLOW_ANY_PROJECT_PATH` | `true` | Set `false` to restrict opening to allowed roots |
@@ -315,27 +385,41 @@ Solo can run a coding agent against your files, so it is protected by default.
 ## Testing
 
 ```bash
-# Backend — 194 tests, 91% coverage
+# Backend — 288 tests, ~86% coverage
 cd backend && ../venv/bin/python -m pytest --cov=app --cov-report=term-missing
 
-# Frontend — 39 tests
+# Frontend — 68 tests
 cd frontend && npm test
 
 # Type checking
 cd frontend && npm run typecheck
 
-# End-to-end against a real running server — 53 checks
+# End-to-end with the built-in simulator — 53 checks, no credentials needed
 ./scripts/e2e.sh
+
+# End-to-end with the REAL Pi Agent — 26 checks (needs a model credential)
+./scripts/e2e-live.sh
 ```
 
-The end-to-end script starts a real server on a throwaway port and proves the
-whole path: health → login → create → open in place → state tree → memory →
-config → question → coding task → live events → steering → persisted state → SPA
-served → removing an opened project leaves files byte-for-byte unchanged.
+The end-to-end scripts start a real server on a throwaway port. `e2e.sh`
+proves the whole path with the deterministic simulator: health → login → create
+→ open in place → state tree → memory → config → question → task → live events →
+steering → persisted state → SPA served → removing an opened project leaves
+files byte-for-byte unchanged.
 
-Coverage includes task-state transitions, credential redaction and encryption at
-rest, ZIP extraction safety, the project path policy, provider-adapter error
-handling, restart recovery, and every Create/Open/Import flow.
+`e2e-live.sh` proves the Phase 2 path with the **real Pi Agent**: it selects a
+provider and model through Solo's own Settings API, submits a coding task
+through Chat, and then asserts that the requested file **actually exists on
+disk** with the right contents, that pre-existing files are untouched, that
+`run.started`/`file.changed`/`tool.started`/`assistant.message`/`run.finished`
+were recorded, and that the project state store and orchestration state were
+updated. It skips itself when Pi or a credential is unavailable.
+
+Backend coverage spans task-state transitions, credential redaction and
+encryption at rest, ZIP extraction safety, the project path policy,
+provider-adapter error handling, restart recovery, the Pi RPC protocol and event
+translation (against a protocol-accurate fake), the orchestration state machine,
+the OpenRouter client, Pyright integration and every Create/Open/Import flow.
 
 ---
 
@@ -347,12 +431,14 @@ handling, restart recovery, and every Create/Open/Import flow.
 ├── install.sh              one-command installer (auto | --docker | --native)
 ├── docker-compose.yml      single-service Docker deployment
 ├── Dockerfile              two-stage build: Node builds the UI, Python serves it
+├── Pi Agent Docs/           Pi protocol reference (v1.1.0) + integration notes
 ├── backend/
 │   └── app/
-│       ├── adapters/       coding-agent contract + simulator + Pi probe
+│       ├── adapters/       Pi RPC client, event translator, session manager, simulator
 │       ├── api/            HTTP + WebSocket routers
 │       ├── repositories/   all database access
-│       ├── services/       auth, settings, projects, project store, paths, orchestration
+│       ├── services/       auth, settings, projects, store, paths, Pi config,
+│       │                   OpenRouter, orchestrator brain, checks, orchestration
 │       ├── config.py       environment-driven settings
 │       ├── domain.py       task/event/intent vocabulary
 │       ├── models.py       SQLAlchemy schema
@@ -360,8 +446,9 @@ handling, restart recovery, and every Create/Open/Import flow.
 │       └── main.py         app factory
 ├── frontend/
 │   └── src/
-│       ├── components/     header, auth, settings, project dialog, directory browser, Dockview
-│       ├── panels/         Conversation, Activity, Inspector, Project state
+│       ├── components/     header, auth, settings (Orchestrator/Pi), project dialog,
+│       │                   directory browser, Dockview layout
+│       ├── panels/         Conversation, Activity, Inspector, Project state, Plan
 │       ├── state/          workspace provider
 │       └── utils/          formatting helpers
 ├── scripts/                dev.sh, e2e.sh, backup.sh, restore.sh
@@ -382,7 +469,7 @@ handling, restart recovery, and every Create/Open/Import flow.
 ./solo.sh restart
 ./solo.sh logs        # follow the log
 ./solo.sh update      # git pull, reinstall deps, rebuild UI, restart
-./solo.sh doctor      # check prerequisites without changing anything
+./solo.sh doctor      # check prerequisites (incl. Pi and Pyright) without changing anything
 ```
 
 Logs: `data/solo.log`. PID: `data/solo.pid`.
@@ -423,6 +510,12 @@ python3 -m venv venv && ./venv/bin/pip install -r backend/requirements-dev.txt
 | Pi badge is grey | The `pi` binary is not on `PATH`. Expected in this phase; relevant from Phase 2. |
 | Task shows `RECOVERY_REQUIRED` | Solo restarted while a task was in flight. It never assumes interrupted work succeeded. |
 | Voice control is disabled | Live voice arrives in Phase 4; the control is disabled with a label rather than pretending to work. |
+| Pi badge grey / backend shows `Simulator` | The `pi` executable was not found. `./solo.sh install` installs it locally; `./solo.sh doctor` reports the state. |
+| Task fails with *"Pi has no model selected"* | Configure a provider and model in **Settings → Pi Agent**. |
+| Task fails with `401`, `402` or *"Insufficient credits"* | The provider rejected the request. The full provider message is shown in the Activity panel. |
+| Pi cannot reach a model after changing provider | Press **Refresh catalog** in Settings → Pi Agent, then **Discover models**. |
+| Static checks show `skipped` | Pyright is not installed (`./venv/bin/pip install pyright`) or the project has no Python files. |
+| `verified` never appears | Intentional: `verified` requires a successful **real request**, not merely a stored key. |
 | Layout looks broken | `localStorage.removeItem('solo.layout.v1')` and reload. |
 
 ---
@@ -433,11 +526,11 @@ python3 -m venv venv && ./venv/bin/pip install -r backend/requirements-dev.txt
 |---|---|
 | **1 ✅** | Deployable shell: auth, settings, tiled UI, task pipeline, tests, Docker + native install |
 | **1.5 ✅** | Project model: Create / Open in place / Import, `.solo` state store, state tree, memory, per-project config |
-| **2** | Pi RPC subprocess: JSONL over stdio, request correlation, steering, cancellation, real file and test events |
-| **3** | OpenRouter: structured intent classification, bounded context, project Q&A, progress summaries |
+| **2 ✅** | Pi Agent over RPC (real file changes), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised queue, full Settings-UI configuration |
+| **3** | Deeper reasoning: richer decomposition, dependency-aware re-planning, retrieval-backed project Q&A |
 | **4** | ElevenLabs: signed-URL voice session, live transcript, text fallback |
-| **5** | Spoken progress: contextual updates, TTS queue, interruption handling |
-| **6** | Hardening: real-server smoke test, migrations, reverse-proxy guide |
+| **5** | Spoken progress: narration of the same summaries, TTS queue, interruption handling |
+| **6** | Hardening: migrations, reverse-proxy guide, real-server smoke test |
 
 Out of scope for the MVP: multi-user accounts, teams/billing, a plugin
 marketplace, vector memory, concurrent writers per project, and a code editor.
@@ -448,6 +541,9 @@ marketplace, vector memory, concurrent writers per project, and a code editor.
 
 - [docs/architecture.md](docs/architecture.md) — modules, data model, event flow
 - [docs/projects.md](docs/projects.md) — the project model and state store
+- [docs/pi-agent.md](docs/pi-agent.md) — how Pi is integrated and configured
+- [docs/orchestrator.md](docs/orchestrator.md) — the Orchestrator model and state
+- [Pi Agent Docs](Pi%20Agent%20Docs/) — local Pi protocol reference (v1.1.0) + integration notes
 - [docs/deployment.md](docs/deployment.md) — Docker, HTTPS, backup/restore, updates
 - [docs/development.md](docs/development.md) — workflow, conventions, adding an adapter
 - [docs/api.md](docs/api.md) — REST + WebSocket reference

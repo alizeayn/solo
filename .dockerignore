@@ -1,0 +1,24 @@
+# Build artefacts that must never enter the image context.
+.git
+.gitignore
+.github
+node_modules
+**/node_modules
+frontend/dist
+venv
+.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+data
+*.log
+project-report
+docs
+*.md
+!backend/requirements*.txt
+initial-admin-password

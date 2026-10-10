@@ -1,0 +1,13 @@
+# Voice-First AI Workspace — backend runtime dependencies.
+# Pinned to the versions verified during Phase 1 (see PROJECT_REPORT).
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-multipart==0.0.20
+cryptography==44.0.0
+httpx==0.28.1
+
+# --- Test / dev only (installed via requirements-dev.txt) ---

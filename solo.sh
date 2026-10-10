@@ -286,7 +286,7 @@ start_solo() {
     warn "The server did not report healthy within 30 seconds."
     warn "Inspect the log: ./solo.sh logs"
   fi
-  write_install_manifest
+  write_install_manifest "$(manifest_get version)"
   print_access
 }
 
@@ -352,9 +352,13 @@ print_access() {
 # Install / update bookkeeping
 # --------------------------------------------------------------------------- #
 write_install_manifest() {
+  # $1 (optional) is the version being replaced. Passing it explicitly avoids
+  # recording the new version as its own predecessor.
+  local previous_version="${1:-}"
   mkdir -p "$DATA_DIR"
   APP_DATA_DIR="$DATA_DIR" ROOT_DIR="$ROOT_DIR" \
   VERSION="$(repo_version)" COMMIT="$(git_commit)" \
+  SOLO_PREVIOUS_VERSION="$previous_version" \
   REQ_HASH="$(sha256_of "$ROOT_DIR/backend/requirements.txt")" \
   LOCK_HASH="$(sha256_of "$ROOT_DIR/frontend/package-lock.json")" \
   FE_HASH="$(frontend_fingerprint)" \
@@ -373,7 +377,9 @@ now = datetime.now(timezone.utc).isoformat()
 payload = {
     "version": os.environ["VERSION"],
     "commit": os.environ["COMMIT"],
-    "previous_version": previous.get("version"),
+    # The caller knows the version it started from; otherwise fall back to what
+    # was recorded, which is correct for a plain install or restart.
+    "previous_version": os.environ.get("SOLO_PREVIOUS_VERSION") or previous.get("version"),
     "requirements_hash": os.environ["REQ_HASH"],
     "package_lock_hash": os.environ["LOCK_HASH"],
     "frontend_hash": os.environ["FE_HASH"],
@@ -603,8 +609,7 @@ PY
     ok "Skipping restart (--no-restart)"
   fi
 
-  write_install_manifest
-  SOLO_UPDATED_BY="solo.sh update" write_install_manifest
+  SOLO_UPDATED_BY="solo.sh update" write_install_manifest "$previous_version"
   # Record the pinned Pi version so the next update can detect a change.
   local final_pi
   final_pi="$(grep -oE 'PI_PACKAGE_VERSION = "[^"]+"' "$ROOT_DIR/backend/app/services/pi_runtime.py" 2>/dev/null | head -1 | cut -d'"' -f2)"

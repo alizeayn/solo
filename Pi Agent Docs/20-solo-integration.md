@@ -25,6 +25,7 @@ PiSessionManager
 
 | Concern | Owner |
 |---|---|
+| **Installing, locating and isolating Solo's own runtime** | `backend/app/services/pi_runtime.py` |
 | Launching, framing, correlating, shutting down | `backend/app/adapters/pi_rpc.py` |
 | Process-per-project lifecycle, reservations, restart | `backend/app/adapters/pi_session.py` |
 | Mapping Pi records → Solo's event vocabulary | `backend/app/adapters/pi_events.py` |
@@ -77,26 +78,32 @@ auth.json = AAAA-AUTHJSON   OPENROUTER_API_KEY = BBBB-ENVVAR
 ```
 
 **Consequence.** Setting `OPENROUTER_API_KEY` in the subprocess environment is
-**not** enough to make Solo's configured credential effective. An existing key
-in the user's `auth.json` wins. Solo therefore writes the credential to
-`auth.json` — the same file Pi's `/login` writes — so what the user configures in
-Solo is what Pi actually uses.
+**not** enough to make Solo's configured credential effective. An entry in
+whichever `auth.json` the process reads wins, so Solo writes the credential to
+**its own** `auth.json` — the same file `/login` writes, but in Solo's isolated
+agent directory.
 
-### 3.2 A fresh agent directory has **zero models** — **verified**
+### 3.2 A fresh agent directory has no models **until it is authenticated** — **verified**
 
 ```
-PI_CODING_AGENT_DIR=<empty dir> → get_available_models → total = 0, openrouter = 0
-PI_CODING_AGENT_DIR unset       → get_available_models → total = 436, openrouter = 405
+PI_CODING_AGENT_DIR=<empty dir>, no credential → get_available_models → 0 models
+PI_CODING_AGENT_DIR=<empty dir>, one OpenRouter credential → 401 models
 ```
 
-The model catalog lives in the agent directory (`models.json` /
-`models-store.json`). Overriding `PI_CODING_AGENT_DIR` to an empty directory
-silently removes every model and leaves `--model` unresolved.
+The package ships the provider catalogs
+(`node_modules/@earendil-works/pi-ai/dist/providers/data/*.json`); Pi lists the
+models for **providers it has credentials for**. An early conclusion — "a fresh
+agent directory has no models, so Solo must reuse the host's configuration" —
+was wrong: it was simply unauthenticated.
 
-**Consequence.** Solo does **not** override the agent directory by default. It
-reuses the user's existing Pi installation, which also preserves their providers
-and catalog. An explicit `PI_AGENT_DIR` setting exists for users who want
-isolation and accept running `pi update --models` to rebuild a catalog.
+**Consequence.** Full isolation costs nothing. Solo uses its own agent directory
+and its own credential, and the catalog resolves from them. Saving a credential
+through Settings triggers a catalog refresh so this works without a terminal.
+
+There is one real constraint: `node` must be reachable. Solo resolves it once at
+install time, records the absolute path in `runtime.json`, and passes it
+explicitly, so the `.bin/pi` shim's `#!/usr/bin/env node` shebang — and any
+dependency on `PATH` — is bypassed.
 
 ### 3.3 Non-interactive modes cannot answer the project-trust prompt — **documented + verified**
 

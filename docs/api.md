@@ -19,6 +19,9 @@ cross-origin `Origin` header are rejected with `403`.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/pi/status` | Runtime, backend, saved provider/model, live sessions |
+| `GET` | `/api/pi/runtime?verify=` | Solo's own runtime: installed, verified, source, dirs, node |
+| `POST` | `/api/pi/runtime/install?force=&verify=` | Install or upgrade Solo's isolated Pi Agent |
+| `POST` | `/api/pi/runtime/verify` | Start the runtime and run a command |
 | `GET` | `/api/pi/providers` | Providers known to Pi plus a curated fallback list |
 | `GET` | `/api/pi/models?provider=&refresh=` | Pi's resolved catalog |
 | `POST` | `/api/pi/models/refresh` | Runs `pi update --models` |
@@ -34,6 +37,61 @@ cross-origin `Origin` header are rejected with `403`.
 
 `state` is `not_configured`, `configured`, `verified` or `failed`. A provider is
 never reported `verified` unless a real request succeeded.
+
+### Runtime provenance
+
+```json
+{
+  "installed": true, "verified": true, "available": true,
+  "source": "managed", "isolated": true,
+  "executable": "/…/data/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "runtime_dir": "/…/data/pi-runtime",
+  "agent_dir": "/…/data/pi/agent",
+  "node": "/usr/bin/node",
+  "version": "1.1.0",
+  "detail": "Solo's isolated Pi Agent is installed at /…/data/pi-runtime."
+}
+```
+
+`source` is `managed` (Solo's own copy), `external` (an explicit `PI_EXECUTABLE`
+override) or `none`. `isolated` is true only for `managed`. The executable is
+never resolved through `PATH`; a bare command name in `PI_EXECUTABLE` is refused
+and reported in `detail`.
+
+### Saving a credential also refreshes the catalog
+
+`PUT /api/pi/providers/{id}/credential` writes Pi's own `auth.json`, then runs
+`pi update --models` and reports the model count in `detail`. This is what makes
+an isolated agent directory usable without a terminal step. The credential file
+is always Solo's; `~/.pi/agent` is never touched.
+
+---
+
+## Project files (Writing panel and uploads)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/projects/{id}/files?path=` | Read a text file |
+| `PUT` | `/api/projects/{id}/files` | `{path, content, overwrite}` — create or replace |
+| `POST` | `/api/projects/{id}/files/upload` | `multipart/form-data`: `file`, optional `directory`, `overwrite` |
+| `GET` | `/api/projects/{id}/files/limits` | Advisory size limits for the UI |
+
+```json
+{"path": "docs/notes.md", "content": "# Notes", "size": 7, "truncated": false, "binary": false}
+```
+
+`binary` is true when the file is not valid UTF-8 text; `content` is then empty.
+`truncated` is true when the file is larger than the read limit.
+
+| Status | Cause |
+|---|---|
+| `400` | traversal or an absolute path; the project metadata directory or `.git`; a hidden upload name; over the size limit |
+| `413` | upload larger than the configured limit |
+| `409` | the project directory is not accessible |
+
+Paths are resolved inside the project root, symlinks are followed and re-checked,
+nothing is executed, and `content` is written atomically so an interrupted save
+cannot truncate a file.
 
 ---
 

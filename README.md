@@ -21,6 +21,7 @@ coding agent** — from the browser, without living in a terminal.
 - [What Solo does](#what-solo-does)
 - [How a coding task works](#how-a-coding-task-works)
 - [Quick start](#quick-start)
+- [Updating Solo](#updating-solo)
 - [Configuring the agents](#configuring-the-agents)
 - [Create, Open and Import](#create-open-and-import)
 - [Project state on disk](#project-state-on-disk)
@@ -59,6 +60,10 @@ everything in a folder you can read.
 | Question vs. steer vs. stop vs. new-task routing | ✅ |
 | Restart recovery: interrupted tasks become `RECOVERY_REQUIRED` | ✅ |
 | **Real Pi Agent execution** via RPC (files are actually created/modified) | ✅ |
+| **Solo's own isolated Pi Agent** — never your desktop installation | ✅ |
+| **In-place updates** (`./solo --update`) that keep every project and all data | ✅ |
+| Writing panel, and file upload into the project | ✅ |
+| Animated voice indicator (labelled as a Phase 4 preview) | ✅ |
 | **Pyright** static checks after each task, with diagnostics in the UI | ✅ |
 | **Orchestrator model** (OpenRouter) for intent, planning, summaries | ✅ |
 | **Pi configured from Settings**: provider, credential, models, verification | ✅ |
@@ -146,7 +151,8 @@ cd solo
 - **Docker** when the daemon is reachable → builds an image and starts a
   container.
 - **Native** otherwise → creates a virtualenv, installs dependencies, builds the
-  web UI, seeds an admin password and starts the server.
+  web UI, installs **Solo's own Pi Agent**, seeds an admin password and starts the
+  server.
 
 Either way it prints a URL, a username, and a **one-time password**:
 
@@ -182,6 +188,9 @@ Force a specific path when you want it:
 | `data/master.key` | Encryption key for stored credentials, mode `600` |
 | `data/secrets.enc` | Encrypted API keys |
 | `data/workspaces/` | Projects created or imported by Solo |
+| `data/pi-runtime/` | **Solo's own Pi Agent** — never your desktop installation |
+| `data/pi/agent/` | Pi's configuration *for Solo*: credentials and model catalog |
+| `data/install.json` | Installed version, commit and fingerprints (drives updates) |
 | `.env` | Operational settings, mode `600` (no secrets) |
 
 Everything lives inside the repository folder, so uninstalling is `rm -rf`.
@@ -189,10 +198,96 @@ Only `data/` and `.env` matter when upgrading.
 
 ### Then
 
-1. **Settings** → add your OpenRouter key (and ElevenLabs key + Agent ID when
-   you want voice). Use **Test connection** to confirm.
-2. **Create Project** or **Open Project**.
-3. Type a request in the Conversation panel and watch the Activity panel.
+1. **Settings → Orchestrator** → paste your OpenRouter key, test it, retrieve
+   models, pick one, save. This model powers intent detection and summaries.
+2. **Settings → Pi Agent** → choose a provider, add its API key, discover models,
+   pick one, save. This is the model that writes your code.
+3. **Create Project** or **Open Project**.
+4. Type a request in the Conversation panel and watch the Activity panel.
+
+**Solo works without any of this.** With no credentials it uses the built-in
+simulator and deterministic rules, so you can explore everything first.
+
+---
+
+## Updating Solo
+
+Solo updates **in place**. Projects, memory, sessions, credentials, provider
+configuration and workspace state all survive.
+
+```bash
+cd ~/Desktop/solo
+./solo --update          # or: ./solo.sh update
+```
+
+The updater fetches `origin`, refuses to overwrite uncommitted work, backs up the
+database, encryption key, secrets and `.env`, and then **rebuilds only what
+actually changed** — backend dependencies, frontend dependencies, the web UI,
+Solo's Pi runtime and database migrations each have their own trigger. An update
+whose only change is the version performs zero rebuild steps and simply restarts.
+
+```bash
+./solo.sh version               # installed vs available version, commits behind
+./solo.sh update --no-restart   # apply changes, restart later
+./solo.sh update --force        # allow a dirty tree or a diverged branch
+```
+
+If an update fails it **rolls back** the checkout and the data and restarts the
+previous version rather than leaving a partial state. Details, manual rollback
+and restoring a backup: [docs/updating.md](docs/updating.md).
+
+---
+
+## Configuring the agents
+
+Both models live in **Settings** — no terminal needed.
+
+### Pi Agent (writes the code)
+
+Solo installs and owns its own Pi Agent, so nothing here touches the Pi you may
+already use on this computer. The runtime card at the top of **Settings → Pi
+Agent** states at a glance whether Solo's runtime is installed and verified, with
+**Install / repair** and **Verify runtime** actions.
+
+| Step | What to do |
+|---|---|
+| 1. Provider | Pick one from the list. Providers with a ✓ already have a credential. |
+| 2. API key | Paste it and press **Save credential**. Solo writes it to *its own* `auth.json` (mode `600`), exactly as Pi's `/login` does. |
+| 3. Check | **Check configuration** asks Pi whether the credential is present. |
+| 4. Verify | **Verify with a real request** sends one minimal completion — the only thing that proves the provider *accepts* the key. |
+| 5. Models | **Discover models** (or **Refresh catalog**, which runs `pi update --models`), then pick one. |
+| 6. Save | **Save selection** makes it what coding tasks use. |
+
+Providers whose model list cannot be discovered are supported: type the model ID
+manually. The UI never shows `verified` unless a real request succeeded. Saving a
+credential also refreshes Solo's own model catalog, so an isolated installation
+becomes usable without any terminal step.
+
+### Why Solo has its own Pi Agent
+
+| | |
+|---|---|
+| **Never uses `PATH`** | The executable is an absolute path inside Solo, so a `pi` on this machine can never be picked up silently |
+| **Never touches `~/.pi/agent`** | Solo's credentials, settings and model catalog live in `data/pi/agent` |
+| **Independent** | Reinstalling or reconfiguring Solo cannot break your desktop Pi workflow, and vice versa |
+
+Verified: a full coding task completes with the global `pi` removed from `PATH`
+(39/39 live checks), and `~/.pi` is byte-for-byte unchanged after a credential
+save.
+
+### Orchestrator (thinks about the work)
+
+**Settings → Orchestrator**: save an OpenRouter key, **Test key**, **Retrieve
+models**, choose a model, **Save model**. Its responsibilities are intent
+detection, task decomposition and prioritisation, state management and concise
+progress summaries. Disable it and Solo falls back to deterministic rules.
+
+### Pyright (verifies the work)
+
+Installed automatically with the backend. After each task settles Solo runs
+Pyright over the files the agent changed and shows the diagnostics in the
+Activity panel. Toggle it in **Settings → Preferences**, or run it on demand from
+the Inspector.
 
 ---
 
@@ -312,11 +407,12 @@ API keys in this file.**
 | `MAX_UPLOAD_MB` | `200` | ZIP upload limit |
 | `MAX_ZIP_ENTRIES` / `MAX_UNCOMPRESSED_MB` | `20000` / `2048` | Extraction guards |
 | `LOG_LEVEL` | `INFO` | `DEBUG`…`ERROR` (secrets stay redacted) |
-| `AGENT_BACKEND` | `auto` | `auto` uses Pi when available, else the simulator |
-| `PI_EXECUTABLE` | `pi` | Path to the Pi CLI (written by the installer when installed locally) |
+| `AGENT_BACKEND` | `auto` | `auto` uses Solo's Pi runtime when installed, else the simulator |
+| `PI_EXECUTABLE` | *(empty)* | Optional escape hatch; must be an **absolute path**. A bare `pi` is refused, so Solo cannot silently use the host installation |
+| `PI_RUNTIME_DIR` | `<data>/pi-runtime` | Where Solo installs its own Pi Agent |
+| `PI_AGENT_DIR` | `<data>/pi/agent` | Pi's configuration for Solo — never `~/.pi/agent` |
 | `PI_RUN_TIMEOUT_SECONDS` | `1800` | Wall-clock limit for one coding task |
 | `PI_APPROVE_PROJECT` | `false` | Trust project-local `.pi/` resources |
-| `PI_AGENT_DIR` | *(empty)* | Override Pi's agent directory. **Leave empty**: a fresh directory has no model catalog |
 | `ORCHESTRATOR_ENABLED` | `true` | Use the OpenRouter model for planning and summaries |
 | `CHECKS_ENABLED` | `true` | Run Pyright after a task |
 | `CHECKS_AFTER_TASK` | `true` | Automatically check the changed files |
@@ -385,10 +481,10 @@ Solo can run a coding agent against your files, so it is protected by default.
 ## Testing
 
 ```bash
-# Backend — 288 tests, ~86% coverage
+# Backend — 339 tests
 cd backend && ../venv/bin/python -m pytest --cov=app --cov-report=term-missing
 
-# Frontend — 68 tests
+# Frontend — 82 tests
 cd frontend && npm test
 
 # Type checking
@@ -397,7 +493,7 @@ cd frontend && npm run typecheck
 # End-to-end with the built-in simulator — 53 checks, no credentials needed
 ./scripts/e2e.sh
 
-# End-to-end with the REAL Pi Agent — 26 checks (needs a model credential)
+# End-to-end with the REAL Pi Agent — 39 checks (needs a model credential)
 ./scripts/e2e-live.sh
 ```
 
@@ -510,7 +606,9 @@ python3 -m venv venv && ./venv/bin/pip install -r backend/requirements-dev.txt
 | Pi badge is grey | The `pi` binary is not on `PATH`. Expected in this phase; relevant from Phase 2. |
 | Task shows `RECOVERY_REQUIRED` | Solo restarted while a task was in flight. It never assumes interrupted work succeeded. |
 | Voice control is disabled | Live voice arrives in Phase 4; the control is disabled with a label rather than pretending to work. |
-| Pi badge grey / backend shows `Simulator` | The `pi` executable was not found. `./solo.sh install` installs it locally; `./solo.sh doctor` reports the state. |
+| Pi badge grey / backend shows `Simulator` | Solo's own Pi runtime is not installed. **Settings → Pi Agent → Install / repair**, or `./solo.sh install`. `./solo.sh doctor` shows the runtime, its source and whether it is isolated. |
+| `PI_EXECUTABLE` is rejected | It is set to a bare command name. Solo refuses to resolve that through `PATH`; set an absolute path, or leave it empty to use Solo's own runtime. |
+| An update refuses to run | Uncommitted changes. Commit or stash them, or use `./solo.sh update --force`. |
 | Task fails with *"Pi has no model selected"* | Configure a provider and model in **Settings → Pi Agent**. |
 | Task fails with `401`, `402` or *"Insufficient credits"* | The provider rejected the request. The full provider message is shown in the Activity panel. |
 | Pi cannot reach a model after changing provider | Press **Refresh catalog** in Settings → Pi Agent, then **Discover models**. |
@@ -527,6 +625,7 @@ python3 -m venv venv && ./venv/bin/pip install -r backend/requirements-dev.txt
 | **1 ✅** | Deployable shell: auth, settings, tiled UI, task pipeline, tests, Docker + native install |
 | **1.5 ✅** | Project model: Create / Open in place / Import, `.solo` state store, state tree, memory, per-project config |
 | **2 ✅** | Pi Agent over RPC (real file changes), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised queue, full Settings-UI configuration |
+| **2.2 ✅** | Solo's own isolated Pi Agent runtime; in-place updates; Writing panel, file upload and a voice preview |
 | **3** | Deeper reasoning: richer decomposition, dependency-aware re-planning, retrieval-backed project Q&A |
 | **4** | ElevenLabs: signed-URL voice session, live transcript, text fallback |
 | **5** | Spoken progress: narration of the same summaries, TTS queue, interruption handling |
@@ -541,8 +640,9 @@ marketplace, vector memory, concurrent writers per project, and a code editor.
 
 - [docs/architecture.md](docs/architecture.md) — modules, data model, event flow
 - [docs/projects.md](docs/projects.md) — the project model and state store
-- [docs/pi-agent.md](docs/pi-agent.md) — how Pi is integrated and configured
+- [docs/pi-agent.md](docs/pi-agent.md) — how Pi is integrated, isolated and configured
 - [docs/orchestrator.md](docs/orchestrator.md) — the Orchestrator model and state
+- [docs/updating.md](docs/updating.md) — updating in place, versioning, rollback
 - [Pi Agent Docs](Pi%20Agent%20Docs/) — local Pi protocol reference (v1.1.0) + integration notes
 - [docs/deployment.md](docs/deployment.md) — Docker, HTTPS, backup/restore, updates
 - [docs/development.md](docs/development.md) — workflow, conventions, adding an adapter

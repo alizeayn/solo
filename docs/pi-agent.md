@@ -13,6 +13,7 @@ integration design and the empirical findings behind it.
 
 | Concern | Module |
 |---|---|
+| **Solo's own runtime: install, locate, isolate, verify** | `backend/app/services/pi_runtime.py` |
 | Transport: launch, JSONL framing, correlation, shutdown | `backend/app/adapters/pi_rpc.py` |
 | Process-per-project lifecycle, run reservation, restart | `backend/app/adapters/pi_session.py` |
 | Pi records → Solo's normalised events | `backend/app/adapters/pi_events.py` |
@@ -25,7 +26,42 @@ shape or a Pi command name.
 
 ---
 
-## 2. Process model
+## 2. Solo owns its Pi Agent
+
+Solo never uses the Pi Agent installed on the host. It installs, owns and invokes
+its own copy:
+
+```
+<data>/pi-runtime/          npm prefix — Solo's Pi Agent installation
+│   node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
+│   runtime.json            install manifest (version, node path, timestamps)
+└──
+<data>/pi/agent/            PI_CODING_AGENT_DIR — Solo's Pi configuration
+    auth.json               credentials entered in Solo's Settings UI
+    settings.json           defaultProjectTrust=never, no telemetry
+    models-store.json       Solo's own fetched model catalog
+```
+
+| Guarantee | How |
+|---|---|
+| The executable is **never** resolved through `PATH` | `resolve_argv()` returns an absolute interpreter plus an absolute script, or nothing |
+| `~/.pi/agent` is never read or written | the agent directory always resolves inside Solo's data directory |
+| Every subprocess gets Solo's configuration | `PI_CODING_AGENT_DIR` is always set to Solo's own directory |
+| A bare command name is refused | `PI_EXECUTABLE=pi` is rejected and reported, because that is the silent fallback this design exists to prevent |
+
+Subprocesses are spawned as `node <cli.js>` rather than the `node_modules/.bin/pi`
+shim. The shim's shebang is `#!/usr/bin/env node`, which would need `node` on
+`PATH`; passing the resolved Node binary explicitly means the only external
+requirement is a Node installation, discovered once and recorded in the manifest.
+
+**Does isolation cost anything?** No. A fresh agent directory reports no models
+only because it is *unauthenticated*. With a credential stored through Solo,
+the package's bundled provider catalogs resolve: a clean agent directory with
+one OpenRouter credential reports 401 models. (An earlier version of Solo reused
+the host's configuration on the mistaken belief that a fresh directory could
+never have a catalog.)
+
+## 3. Process model
 
 **One long-lived `pi --mode rpc` subprocess per project**, started on demand and
 reused. Pi keeps conversation context in the process, so a follow-up instruction
@@ -43,12 +79,13 @@ cwd = <project root>
 | `--mode rpc` | JSONL bidirectional control |
 | `--no-session` | Solo's `.solo/` store is the durable record; Pi keeps context in-process |
 | `--no-approve` (default) | Pi cannot show a trust prompt in RPC mode, so Solo decides explicitly. Configurable in Settings |
+| `PI_CODING_AGENT_DIR` | Always Solo's own directory — never the host's |
 | `--no-extensions` etc. | A predictable harness with no unanswerable `extension_ui_request` records |
 | `--provider` / `--model` | The selection made in Solo's Settings UI |
 
 ---
 
-## 3. Configuring Pi from the Settings UI
+## 4. Configuring Pi from the Settings UI
 
 **Settings → Pi Agent.**
 
@@ -67,16 +104,17 @@ cwd = <project root>
 An existing `auth.json` entry **takes precedence over a provider environment
 variable** (verified against Pi 1.1.0). Injecting `OPENROUTER_API_KEY` would
 therefore *not* make the credential chosen in Solo effective. Writing
-`auth.json` is the only way to guarantee that what you configure is what Pi
-uses — and it is exactly what `/login` does.
+`auth.json` — Solo's own file, inside Solo's agent directory — is the only way to
+guarantee that what you configure is what Pi uses, and it is exactly what
+`/login` does. Saving a credential also refreshes Solo's model catalog, so the
+isolated installation becomes usable without any terminal step.
 
-### Why Solo does not override the agent directory
+### Installing and repairing
 
-A **fresh agent directory has zero models** (verified). If Solo pointed
-`PI_CODING_AGENT_DIR` somewhere new, `--model` would resolve to nothing and
-every task would fail. Solo therefore reuses your existing Pi installation, which
-also preserves your model catalog. `PI_AGENT_DIR` exists for isolation, but then
-you must run **Refresh catalog** once.
+`./solo.sh install` installs the runtime, and **Settings → Pi Agent** has
+*Install / repair* and *Verify runtime*. A repair is a forced reinstall; a verify
+starts the runtime and runs a command, which is the only thing that sets the
+`verified` state.
 
 ### Three honest states
 
@@ -90,7 +128,7 @@ The UI never conflates these:
 
 ---
 
-## 4. Event translation
+## 5. Event translation
 
 Solo's UI never sees a Pi record. `pi_events.py` maps them onto the same small
 vocabulary the simulator uses, so the activity panel, the event store and the
@@ -114,7 +152,7 @@ coalesced so one response does not become hundreds of stored rows.
 
 ---
 
-## 5. Failure handling
+## 6. Failure handling
 
 | Situation | Behaviour |
 |---|---|
@@ -131,12 +169,15 @@ non-error terminal message completes a task.
 
 ---
 
-## 6. Security notes
+## 7. Security notes
 
 - Pi runs with the permissions of the Solo process, in a directory the user
   deliberately opened. Solo's path policy already constrains which directories
   those can be. Pi is **not** sandboxed; see Pi's own
   [`containerization.md`](../Pi%20Agent%20Docs/vendor/16-containerization.md).
+- Solo's runtime is separate from any Pi on the machine, so configuring Solo can
+  never break a desktop Pi workflow — verified by hashing `~/.pi` before and
+  after a credential save: byte-for-byte unchanged.
 - Credentials never reach the browser: the API returns only
   `{configured: true}` and the provider's own readiness status.
 - `auth.json` is written atomically with mode `600`.
@@ -147,10 +188,11 @@ non-error terminal message completes a task.
 
 ---
 
-## 7. Testing
+## 8. Testing
 
 | Layer | How |
 |---|---|
+| **Isolation** | `backend/tests/test_pi_runtime.py` — 20 tests: PATH is never used even when a global `pi` exists, the agent directory is never `~/.pi/agent`, every subprocess gets Solo's environment, the installer writes into Solo's own prefix, and a decoy `~/.pi/agent` is proven untouched |
 | Protocol, translation, adapter | `backend/tests/test_pi_integration.py` — a protocol-accurate fake (`tests/fixtures/fake_pi`) exercises real subprocesses, real pipes, real framing and correlation, deterministically and without credentials |
 | Configuration service and API | `backend/tests/test_checks_and_api_pi.py` |
 | Real model | `./scripts/e2e-live.sh` — submits a coding task through Chat and asserts the file really exists on disk |

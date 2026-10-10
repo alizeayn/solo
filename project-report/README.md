@@ -5,11 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model & public readiness) ✅ · **2 (Pi Agent, Orchestrator, state foundation)** ✅ |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · **2.2 (isolated runtime, in-place updates)** ✅ |
 | **Last updated** | 2026-10-10 |
-| **Automated checks** | **382 passing** — 288 backend, 68 frontend, 26 live end-to-end (+53 simulator e2e) |
-| **Backend coverage** | 86 % |
-| **Defects** | 16 found, 15 fixed with regression coverage, 1 environment gap |
+| **Automated checks** | **513 passing** — 339 backend, 82 frontend, 39 live end-to-end (+53 simulator e2e) |
+| **Defects** | 23 found, 22 fixed with regression coverage, 1 environment gap |
 
 ---
 
@@ -40,6 +39,16 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 20 | Defects | [defect-log-0020.md](04-defects/defect-log-0020.md) |
 | 21 | Verification | [acceptance-criteria-0021.md](05-verification/acceptance-criteria-0021.md) |
 | 22 | Summary | [summary-0022.md](06-summary/summary-0022.md) |
+
+### Phase 2.2 — Isolated runtime, in-place updates, workspace tiles
+
+| # | Stage | Document |
+|---|---|---|
+| 23 | Planning | [isolation-and-updates-0023.md](01-planning/isolation-and-updates-0023.md) |
+| 24 | Implementation | [isolated-runtime-and-updates-0024.md](02-implementation/isolated-runtime-and-updates-0024.md) |
+| 25 | Defects | [defect-log-0025.md](04-defects/defect-log-0025.md) |
+| 26 | Verification | [acceptance-criteria-0026.md](05-verification/acceptance-criteria-0026.md) |
+| 27 | Summary | [summary-0027.md](06-summary/summary-0027.md) |
 
 ### Phase 1.5 — Solo, project model, public readiness
 
@@ -76,6 +85,7 @@ project-report/
 | 1 | 2026-10-10 | Deployable shell: auth, settings, Dockview UI, task/event pipeline, Docker, docs | 171 (123 BE · 22 FE · 26 e2e) | D-01…D-08 |
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
+| 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
 
 ---
 
@@ -85,6 +95,13 @@ project-report/
 critical path was exercised end to end: sign in → create or import a project →
 ask a question → start a coding task → watch live normalised events → steer the
 running task → reach a terminal status → survive a restart.
+
+**Phase 2.2** removed Solo's last dependency on the machine it runs on. It now
+installs, owns and invokes **its own Pi Agent**, with its own configuration
+directory, so the desktop Pi installation is never read, written or executed —
+verified by running a full coding task with the global `pi` deleted from `PATH`.
+It also became maintainable in place: `./solo --update` rebuilds only what
+changed, backs up first, and rolls back rather than leaving a partial state.
 
 **Phase 2** made Solo do real work. A request typed into Chat is classified and
 planned by an OpenRouter model (with deterministic rules as a permanent
@@ -115,5 +132,6 @@ explicit "Phase 4" note rather than pretending to work.
 | Confirm the Open Project path-policy default (`ALLOW_ANY_PROJECT_PATH=true`) | [11 §4](01-planning/phase-1.5-scope-0011.md) |
 | Docker image build not verified in this environment (D-08) | [14 §D-08](04-defects/defect-log-0008.md#d-08--docker-image-build-could-not-be-executed-in-this-environment) |
 | Docker image still not built — no daemon access (D-08) | [20 §D-08](04-defects/defect-log-0008.md) |
+| No version-range compatibility gate in the updater | [26 §6](05-verification/acceptance-criteria-0026.md) |
 | Live test used `opencode-go`; OpenRouter returned 402 (no credit) | [22 §7](06-summary/summary-0022.md) |
 | Voice (Phase 4) and spoken progress (Phase 5) not implemented, by instruction | [22 §8](06-summary/summary-0022.md) |

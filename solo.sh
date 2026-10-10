@@ -69,7 +69,10 @@ sha256_of() {
 # else does.
 frontend_fingerprint() {
   [[ -d "$ROOT_DIR/frontend/src" ]] || { echo "missing"; return 0; }
-  { find "$ROOT_DIR/frontend/src" -type f -print0 | sort -z | xargs -0 cat 2>/dev/null
+  # LC_ALL=C fixes the sort order, so the same sources always hash identically
+  # regardless of the shell's locale. Otherwise a locale change alone would look
+  # like a source change and trigger a needless rebuild.
+  { find "$ROOT_DIR/frontend/src" -type f -print0 | LC_ALL=C sort -z | xargs -0 cat 2>/dev/null
     cat "$ROOT_DIR/frontend/package.json" \
         "$ROOT_DIR/frontend/vite.config.ts" \
         "$ROOT_DIR/frontend/tsconfig.json" 2>/dev/null

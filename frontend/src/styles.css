@@ -450,6 +450,12 @@ textarea {
   color: #ffb3b3;
 }
 
+.alert--warn {
+  border-color: rgba(233, 168, 68, 0.35);
+  background: rgba(233, 168, 68, 0.1);
+  color: var(--text);
+}
+
 .alert--info {
   background: var(--accent-soft);
   border-color: rgba(91, 141, 239, 0.3);
@@ -2137,4 +2143,69 @@ textarea {
   .milestone__caret {
     animation: none;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Voice channel controls                                              */
+/* ------------------------------------------------------------------ */
+.voice-panel__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
+/* Big enough to hit without looking, which is the point of push-to-talk. */
+.voice-talk {
+  flex: 1;
+  min-height: 38px;
+}
+
+/* A live recording is unmistakable: colour plus motion, not colour alone. */
+.voice-talk--live {
+  background: var(--danger);
+  border-color: var(--danger);
+  animation: voice-talk-pulse 1.4s ease-in-out infinite;
+}
+
+.voice-panel__feedback {
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A heard transcript can be long; keep it from pushing the lines off-screen. */
+.voice-panel__feedback .alert {
+  max-height: 92px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+@keyframes voice-talk-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 107, 107, 0.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-talk--live {
+    animation: none;
+  }
+}
+
+/* A two-column field row: input plus its action button. */
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-row > .input {
+  flex: 1;
+  min-width: 0;
 }

@@ -1,24 +1,33 @@
 /**
  * Voice channel panel.
  *
- * The visible half of Solo's voice-native design: what the agent would say, in
- * order, with controls for barge-in.
+ * This is the whole voice loop in one panel:
  *
- * Audio itself arrives in Phase 4. Rather than a decorative mock-up, this shows
- * the **real narration pipeline** — the lines the agent produced, their
- * priority, whether they were spoken, and how many were dropped — while stating
- * plainly that to playback is not implemented yet. When Phase 4 attaches an
- * audio transport, this panel becomes the transcript of the conversation with
- * no change to its contract.
+ *   press to talk → the browser records → the backend transcribes with
+ *   ElevenLabs Scribe → the transcript is posted to the *existing* message
+ *   endpoint → Orchestrator → Pi Agent → milestones → narration → ElevenLabs
+ *   speech → played back here.
+ *
+ * Two properties matter more than the controls:
+ *
+ * * **Nothing is a mock.** The transcript goes down the same path a typed
+ *   message takes, so intent classification, task creation, Pi Agent execution
+ *   and milestone persistence are all unchanged. Speech is a way to produce
+ *   text and to hear milestones — not a parallel system.
+ * * **It does not overstate itself.** With no API key the panel says audio is
+ *   unavailable rather than showing a dead microphone. Turn-taking is
+ *   push-to-talk, and it says so instead of implying full duplex.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api/client'
+import { useSpeechPlayback } from '../hooks/useSpeechPlayback'
+import { useVoiceInput } from '../hooks/useVoiceInput'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import type { VoiceState } from '../types'
 import { relativeTime } from '../utils/format'
-import VoiceOrb from './VoiceOrb'
+import VoiceOrb, { type VoiceState as VoiceOrbState } from './VoiceOrb'
 
 const KIND_LABEL: Record<string, string> = {
   progress: 'Progress',
@@ -30,9 +39,13 @@ const KIND_LABEL: Record<string, string> = {
 }
 
 export default function VoiceChannel() {
-  const { reportError, narration: lines, connection } = useWorkspace()
+  const { reportError, sendMessage, narration: lines, connection } = useWorkspace()
   const [state, setState] = useState<VoiceState | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [heard, setHeard] = useState<string | null>(null)
+
+  const input = useVoiceInput()
+  const playback = useSpeechPlayback(lines)
 
   const load = useCallback(async () => {
     try {
@@ -62,8 +75,53 @@ export default function VoiceChannel() {
     }
   }
 
-  const spoken = lines.filter((line) => line.spoken).length
+  /**
+   * Push to talk: start on the first press, transcribe and dispatch on the
+   * second. The recording is stopped *before* transcription so the microphone
+   * is released even if the request fails.
+   */
+  const toggleRecording = () =>
+    guarded('talk', async () => {
+      if (input.recording) {
+        const audio = await input.stop()
+        if (!audio) {
+          reportError('Nothing was recorded. Hold the button a moment longer.')
+          return
+        }
+        const transcript = await api.voice.transcribe(audio)
+        if (transcript.empty) {
+          reportError('No speech was detected in that recording.')
+          return
+        }
+        setHeard(transcript.text)
+        // The same endpoint a typed message uses, so the whole pipeline is
+        // unchanged: intent, task, Pi Agent, milestones.
+        await sendMessage(transcript.text)
+        return
+      }
+
+      // Barge-in: stop speaking before opening the microphone, so Solo never
+      // talks over the person.
+      if (playback.speaking) playback.stop()
+      await api.voice.interrupt('user').then(setState).catch(() => undefined)
+      await input.start()
+    })
+
   const audioAvailable = state?.audio_available ?? false
+  const configured = state?.configured ?? false
+  const spoken = useMemo(() => lines.filter((line) => line.spoken).length, [lines])
+
+  // Mapped onto the orb's own vocabulary rather than inventing states it does
+  // not know how to render.
+  const orbState: VoiceOrbState = input.recording
+    ? 'listening'
+    : playback.speaking
+      ? 'speaking'
+      : busy === 'talk'
+        ? 'connecting'
+        : configured
+          ? 'ready'
+          : 'preview'
 
   return (
     <div className="panel voice-panel" aria-label="Voice channel">
@@ -74,7 +132,7 @@ export default function VoiceChannel() {
           <span className="pill pill--active">listening</span>
         ) : (
           <span className="pill pill--neutral">
-            {connection === 'open' ? 'ready' : 'offline'}
+            {connection === 'open' ? (configured ? 'ready' : 'text only') : 'offline'}
           </span>
         )}
         <button
@@ -84,6 +142,7 @@ export default function VoiceChannel() {
           title="Stop speech and drop lower-priority announcements"
           onClick={() =>
             void guarded('interrupt', async () => {
+              playback.stop()
               setState(await api.voice.interrupt('user'))
             })
           }
@@ -95,7 +154,9 @@ export default function VoiceChannel() {
             type="button"
             className="btn btn--sm"
             disabled={busy !== null}
-            onClick={() => void guarded('resume', async () => setState(await api.voice.resume()))}
+            onClick={() =>
+              void guarded('resume', async () => setState(await api.voice.resume()))
+            }
           >
             Resume
           </button>
@@ -103,21 +164,74 @@ export default function VoiceChannel() {
       </div>
 
       <div className="voice-panel__orb">
-        <VoiceOrb state="preview" />
+        <VoiceOrb state={orbState} />
+      </div>
+
+      <div className="voice-panel__controls">
+        <button
+          type="button"
+          className={`btn btn--primary voice-talk ${input.recording ? 'voice-talk--live' : ''}`}
+          disabled={!input.supported || busy !== null}
+          title={
+            input.supported
+              ? 'Press to start, press again to send'
+              : 'This browser cannot record audio'
+          }
+          onClick={() => void toggleRecording()}
+        >
+          {input.recording
+            ? 'Stop and send'
+            : busy === 'talk'
+              ? 'Transcribing…'
+              : input.supported
+                ? 'Hold a thought'
+                : 'Microphone unavailable'}
+        </button>
+
+        {audioAvailable && (
+          <button
+            type="button"
+            className="btn btn--sm"
+            aria-pressed={playback.enabled}
+            onClick={() => playback.setEnabled(!playback.enabled)}
+            title={
+              playback.enabled
+                ? 'Stop speaking milestones aloud'
+                : 'Speak milestones aloud'
+            }
+          >
+            {playback.enabled ? '🔊 Speaking' : '🔇 Muted'}
+          </button>
+        )}
       </div>
 
       <p className="hint voice-channel__note">
-        {audioAvailable
-          ? 'Narration is being spoken.'
-          : 'Narration is recorded and shown here; audio playback arrives in Phase 4.'}
+        {!configured
+          ? 'No ElevenLabs key is configured, so narration is recorded and shown but not spoken. Add a key in Settings → Voice.'
+          : input.recording
+            ? 'Recording. Press again to transcribe and send the task.'
+            : playback.speaking
+              ? 'Speaking a milestone.'
+              : 'Press to talk — speech is transcribed and sent through the normal task path.'}
         {state ? ` · ${spoken} spoken · ${state.dropped} dropped as stale` : ''}
       </p>
+
+      {(input.error || heard) && (
+        <div className="voice-panel__feedback">
+          {input.error && <div className="alert alert--error">{input.error}</div>}
+          {heard && !input.error && (
+            <div className="alert alert--info">
+              <strong>Heard:</strong> {heard}
+            </div>
+          )}
+        </div>
+      )}
 
       <ul className="voice-channel__lines" aria-live="polite">
         {lines.length === 0 ? (
           <li className="voice-channel__empty">
-            Nothing to say yet. Progress summaries, errors and the final result will
-            appear here as the agent works.
+            Nothing to say yet. Milestones, errors and the final result will
+            appear here as the agent works — and be spoken when speech is on.
           </li>
         ) : (
           lines
@@ -138,7 +252,16 @@ export default function VoiceChannel() {
                     {KIND_LABEL[line.kind] ?? line.kind}
                   </span>
                   <span className="hint">{relativeTime(line.created_at)}</span>
-                  {line.spoken && <span className="hint" title="Delivered to the transport">✓ spoken</span>}
+                  {playback.currentId === line.id && (
+                    <span className="hint" title="Playing now">
+                      ▶ speaking
+                    </span>
+                  )}
+                  {line.spoken && playback.currentId !== line.id && (
+                    <span className="hint" title="Delivered to the transport">
+                      ✓ spoken
+                    </span>
+                  )}
                 </span>
                 <span className="voice-line__text">{line.text}</span>
               </li>

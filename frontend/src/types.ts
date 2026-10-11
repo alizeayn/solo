@@ -56,6 +56,12 @@ export interface AppSettings {
   openrouter_model: string | null
   elevenlabs_agent_id: string | null
   elevenlabs_tts_voice_id: string | null
+  /** Text-to-speech model id, e.g. `eleven_flash_v2_5`. */
+  elevenlabs_model_id: string | null
+  /** Speech-to-text model id, e.g. `scribe_v2`. */
+  elevenlabs_stt_model_id: string | null
+  /** Read-only: the selected voice's name, for display. */
+  elevenlabs_voice_name: string | null
   pi_provider: string | null
   pi_model: string | null
   pi_base_url: string | null
@@ -77,6 +83,8 @@ export type SettingsPatch = Partial<{
   openrouter_model: string
   elevenlabs_agent_id: string
   elevenlabs_tts_voice_id: string
+  elevenlabs_model_id: string
+  elevenlabs_stt_model_id: string
   pi_provider: string
   pi_model: string
   pi_base_url: string
@@ -525,6 +533,38 @@ export interface NarrationLine {
   spoken?: boolean
 }
 
+/** One speech model the configured ElevenLabs account can use. */
+export interface VoiceModel {
+  id: string
+  name: string
+  can_tts: boolean
+  can_voice_conversion: boolean
+  can_be_finetuned: boolean
+  max_text_length: number | null
+  description: string | null
+  languages: string[]
+  cost_multiplier: number | null
+  requires_alpha: boolean
+}
+
+/** One voice available to the account. */
+export interface Voice {
+  id: string
+  name: string
+  category: string | null
+  description: string | null
+  labels: Record<string, unknown>
+  preview_url: string | null
+}
+
+/** The result of transcribing one recorded utterance. */
+export interface Transcript {
+  text: string
+  language_code: string | null
+  words: unknown[]
+  empty: boolean
+}
+
 export interface VoiceState {
   enabled: boolean
   transport: string
@@ -538,6 +578,12 @@ export interface VoiceState {
   voice_enabled?: boolean
   speech_enabled?: boolean
   phase?: string
+  /** True when a key is saved, whether or not a voice is usable yet. */
+  configured?: boolean
+  model_id?: string
+  voice_id?: string | null
+  voice_name?: string | null
+  stt_model_id?: string
 }
 
 export type ConnectionState = 'connecting' | 'open' | 'closed'

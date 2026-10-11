@@ -8,7 +8,7 @@
  *   management, summaries.
  *   **Pi Agent** — provider, credentials, model discovery and the coding agent
  *   that executes tasks in the open project.
- *   **Voice** — ElevenLabs (Phase 4).
+ *   **Voice** — ElevenLabs: speech in and speech out.
  *   **Preferences** — feature toggles.
  *
  * Every secret is write-only: the UI sends values and only ever reads back a
@@ -16,11 +16,16 @@
  * corresponding check actually succeeded.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
-import type { ConnectionTestResult, SettingsPatch } from '../types'
+import type {
+  ConnectionTestResult,
+  SettingsPatch,
+  Voice,
+  VoiceModel,
+} from '../types'
 import AccountSettings from './AccountSettings'
 import OrchestratorSettings from './OrchestratorSettings'
 import PiAgentSettings from './PiAgentSettings'
@@ -90,17 +95,51 @@ export default function SettingsView({ onClose }: { onClose: () => void }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Voice (Phase 4 placeholders, stored now so configuration is ready)  */
+/* Voice — ElevenLabs speech in and speech out                         */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Voice configuration.
+ *
+ * Three things this deliberately does **not** do:
+ *
+ * * It does not ask for a Conversational Agent ID. Solo does not use the
+ *   ElevenLabs Agents Platform — that would put an ElevenLabs agent in front of
+ *   the Orchestrator and let it answer from its own context instead of from real
+ *   task state.
+ * * It does not ask for a voice ID to be pasted. Voices are listed from the
+ *   account and chosen, the same way OpenRouter models and Pi providers are.
+ * * It does not hardcode a model catalog. Models come from `GET /v1/models`,
+ *   which reflects what *this account* can use — a static list would offer ids
+ *   that do not exist and hide ones that do.
+ *
+ * The selection is saved through the API the runtime reads, so choosing a model
+ * here changes what Solo actually speaks with, not merely what is displayed.
+ */
 function VoiceSettings() {
   const { settings, refreshSettings } = useWorkspace()
   const [apiKey, setApiKey] = useState('')
-  const [agentId, setAgentId] = useState(settings?.elevenlabs_agent_id ?? '')
-  const [voiceId, setVoiceId] = useState(settings?.elevenlabs_tts_voice_id ?? '')
   const [result, setResult] = useState<ConnectionTestResult | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  const [models, setModels] = useState<VoiceModel[] | null>(null)
+  const [voices, setVoices] = useState<Voice[] | null>(null)
+  const [modelId, setModelId] = useState('')
+  const [sttModelId, setSttModelId] = useState('')
+  const [voiceId, setVoiceId] = useState('')
+
+  // Follow the saved settings, so a change made elsewhere is reflected here.
+  useEffect(() => {
+    setModelId(settings?.elevenlabs_model_id ?? '')
+    setSttModelId(settings?.elevenlabs_stt_model_id ?? '')
+    setVoiceId(settings?.elevenlabs_tts_voice_id ?? '')
+  }, [
+    settings?.elevenlabs_model_id,
+    settings?.elevenlabs_stt_model_id,
+    settings?.elevenlabs_tts_voice_id,
+  ])
 
   async function guarded(key: string, action: () => Promise<void>) {
     setBusy(key)
@@ -115,41 +154,88 @@ function VoiceSettings() {
     }
   }
 
-  const save = () =>
-    guarded('save', async () => {
-      const patch: SettingsPatch = {
-        elevenlabs_agent_id: agentId,
-        elevenlabs_tts_voice_id: voiceId,
-      }
-      if (apiKey.trim()) patch.elevenlabs_api_key = apiKey.trim()
-      await api.settings.update(patch)
+  const saveKey = () =>
+    guarded('key', async () => {
+      if (!apiKey.trim()) throw new Error('Enter an API key first.')
+      await api.settings.update({ elevenlabs_api_key: apiKey.trim() })
       setApiKey('')
       await refreshSettings()
-      setNotice('Voice settings saved.')
+      setNotice('Key saved. Retrieve the models to choose one.')
     })
+
+  const test = () =>
+    guarded('test', async () => {
+      setResult(await api.settings.test('elevenlabs'))
+    })
+
+  const discover = () =>
+    guarded('discover', async () => {
+      // One round trip each: a failure in either is reported as itself rather
+      // than as "discovery failed".
+      const [fetchedModels, fetchedVoices] = await Promise.all([
+        api.voice.models(),
+        api.voice.voices(),
+      ])
+      setModels(fetchedModels)
+      setVoices(fetchedVoices)
+      const speech = fetchedModels.filter((model) => model.can_tts).length
+      setNotice(
+        `Found ${speech} speech model${speech === 1 ? '' : 's'} and ` +
+          `${fetchedVoices.length} voice${fetchedVoices.length === 1 ? '' : 's'}.`,
+      )
+    })
+
+  const saveSelection = () =>
+    guarded('save', async () => {
+      await api.voice.settings({
+        model_id: modelId,
+        stt_model_id: sttModelId,
+        voice_id: voiceId,
+      })
+      await refreshSettings()
+      setNotice('Voice selection saved. The next thing Solo says will use it.')
+    })
+
+  const speechModels = (models ?? []).filter((model) => model.can_tts)
+  const listenModels = (models ?? []).filter((model) => !model.can_tts)
+  const configured = settings?.elevenlabs_api_key.configured ?? false
+  const selectedModel = (models ?? []).find((model) => model.id === modelId)
+  const selectedVoice = (voices ?? []).find((voice) => voice.id === voiceId)
 
   return (
     <div className="settings-pane">
-      <div className="alert alert--info">
-        Live voice conversations and spoken progress arrive in Phases 4 and 5. Credentials can be
-        configured and tested now so the integration has somewhere to read from.
+      <div className={`alert ${configured ? 'alert--info' : 'alert--warn'}`}>
+        {configured
+          ? 'Speech in and speech out are active. Solo speaks milestones through the ' +
+            'narration pipeline, and speech input is transcribed into the same task ' +
+            'path as typing.'
+          : 'Add an ElevenLabs API key to activate speech. Solo uses only text to ' +
+            'speech and speech to text — the Agents Platform is deliberately not used, ' +
+            'so the Orchestrator stays in charge of what is worth saying.'}
       </div>
 
       <section className="settings-section">
         <div className="settings-section__head">
           <h3 className="settings-section__title">ElevenLabs</h3>
-          <button
-            type="button"
-            className="btn btn--sm"
-            disabled={busy === 'test'}
-            onClick={() =>
-              void guarded('test', async () => {
-                setResult(await api.settings.test('elevenlabs'))
-              })
-            }
-          >
-            Test connection
-          </button>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={busy !== null || !configured}
+              title={configured ? undefined : 'Save a key first'}
+              onClick={() => void discover()}
+            >
+              {busy === 'discover' ? 'Retrieving…' : 'Retrieve models and voices'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={busy !== null}
+              onClick={() => void test()}
+            >
+              {busy === 'test' ? 'Testing…' : 'Test connection'}
+            </button>
+          </div>
         </div>
 
         <div className="settings-grid">
@@ -157,53 +243,34 @@ function VoiceSettings() {
             <label htmlFor="el-key">
               API key{' '}
               <span className="hint">
-                {settings?.elevenlabs_api_key.configured
-                  ? `— saved (${settings.elevenlabs_api_key.masked})`
+                {configured
+                  ? `— saved (${settings?.elevenlabs_api_key.masked})`
                   : '— not saved'}
               </span>
             </label>
-            <input
-              id="el-key"
-              className="input"
-              type="password"
-              autoComplete="off"
-              placeholder={settings?.elevenlabs_api_key.configured ? 'Replace the saved key' : 'sk_…'}
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="el-agent">Conversational Agent ID (required for voice)</label>
-            <input
-              id="el-agent"
-              className="input"
-              placeholder="agent_…"
-              value={agentId}
-              onChange={(event) => setAgentId(event.target.value)}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="el-voice">TTS voice ID (progress announcements)</label>
-            <input
-              id="el-voice"
-              className="input"
-              placeholder="voice ID"
-              value={voiceId}
-              onChange={(event) => setVoiceId(event.target.value)}
-            />
-          </div>
-
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={busy === 'save'}
-              onClick={() => void save()}
-            >
-              {busy === 'save' ? 'Saving…' : 'Save'}
-            </button>
+            <div className="form-row">
+              <input
+                id="el-key"
+                className="input"
+                type="password"
+                autoComplete="off"
+                placeholder={configured ? 'Replace the saved key' : 'sk_…'}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                disabled={busy !== null || !apiKey.trim()}
+                onClick={() => void saveKey()}
+              >
+                {busy === 'key' ? 'Saving…' : 'Save key'}
+              </button>
+            </div>
+            <span className="hint">
+              Sent to ElevenLabs as the <code>xi-api-key</code> header. Stored
+              encrypted and never returned by the API.
+            </span>
           </div>
 
           {result && (
@@ -217,6 +284,130 @@ function VoiceSettings() {
           )}
         </div>
       </section>
+
+      {configured && (
+        <section className="settings-section">
+          <div className="settings-section__head">
+            <h3 className="settings-section__title">Speech output</h3>
+            <span className="hint">
+              {speechModels.length
+                ? `${speechModels.length} available`
+                : 'not retrieved yet'}
+            </span>
+          </div>
+
+          <div className="settings-grid">
+            <div className="field">
+              <label htmlFor="el-model">Voice model</label>
+              <select
+                id="el-model"
+                className="input"
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+                disabled={speechModels.length === 0}
+              >
+                {speechModels.length === 0 && (
+                  <option value={modelId}>{modelId || 'Retrieve models first'}</option>
+                )}
+                {speechModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} — {model.id}
+                  </option>
+                ))}
+              </select>
+              {selectedModel && (
+                <span className="hint">
+                  {selectedModel.max_text_length
+                    ? `up to ${selectedModel.max_text_length.toLocaleString()} characters per request`
+                    : 'character limit not reported'}
+                  {selectedModel.cost_multiplier !== null &&
+                    ` · ${selectedModel.cost_multiplier}× character cost`}
+                  {selectedModel.requires_alpha && ' · requires alpha access'}
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label htmlFor="el-voice">Voice</label>
+              <select
+                id="el-voice"
+                className="input"
+                value={voiceId}
+                onChange={(event) => setVoiceId(event.target.value)}
+                disabled={(voices ?? []).length === 0}
+              >
+                <option value="">
+                  {settings?.elevenlabs_voice_name
+                    ? `Current: ${settings.elevenlabs_voice_name}`
+                    : 'First voice on the account'}
+                </option>
+                {(voices ?? []).map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                    {voice.category ? ` — ${voice.category}` : ''}
+                  </option>
+                ))}
+              </select>
+              {selectedVoice?.preview_url && (
+                <audio controls preload="none" src={selectedVoice.preview_url} />
+              )}
+              <span className="hint">
+                Listing voices means choosing one, rather than pasting an identifier
+                that may not exist for this account.
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {configured && (
+        <section className="settings-section">
+          <div className="settings-section__head">
+            <h3 className="settings-section__title">Speech input</h3>
+          </div>
+          <div className="settings-grid">
+            <div className="field">
+              <label htmlFor="el-stt">Recognition model</label>
+              <select
+                id="el-stt"
+                className="input"
+                value={sttModelId}
+                onChange={(event) => setSttModelId(event.target.value)}
+                disabled={listenModels.length === 0}
+              >
+                {listenModels.length === 0 && (
+                  <option value={sttModelId}>
+                    {sttModelId || 'Retrieve models first'}
+                  </option>
+                )}
+                {listenModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} — {model.id}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">
+                Speech is recorded in the browser and transcribed by the backend,
+                then posted to the same endpoint a typed message uses — so intent
+                classification, task creation and Pi Agent execution are unchanged.
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {configured && (
+        <div className="form-actions">
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            disabled={busy !== null}
+            onClick={() => void saveSelection()}
+          >
+            {busy === 'save' ? 'Saving…' : 'Save voice selection'}
+          </button>
+        </div>
+      )}
 
       {error && <div className="alert alert--error">{error}</div>}
       {notice && !error && <div className="alert alert--info">{notice}</div>}

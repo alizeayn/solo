@@ -11,7 +11,10 @@ import type {
   AppEvent,
   FileContent,
   Milestone,
+  Transcript,
+  Voice,
   NarrationLine,
+  VoiceModel,
   VoiceState,
   FileLimits,
   PiInstallResult,
@@ -143,6 +146,38 @@ export const api = {
         body: JSON.stringify({ reason }),
       }),
     resume: () => request<VoiceState>('/api/voice/resume', { method: 'POST' }),
+
+    /** Speech models the configured account can actually use. */
+    models: () => request<VoiceModel[]>('/api/voice/models'),
+    /** Voices available to the account, so a voice is chosen not pasted. */
+    voices: (limit = 100) => request<Voice[]>(`/api/voice/voices?limit=${limit}`),
+
+    /**
+     * Save the selected model and voice. This writes the setting the runtime
+     * reads, so the next line Solo speaks uses it.
+     */
+    settings: (patch: { model_id?: string; voice_id?: string; stt_model_id?: string }) =>
+      request<VoiceState>('/api/voice/settings', {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      }),
+
+    /**
+     * Transcribe one recorded utterance. The transcript is returned and *not*
+     * dispatched: the caller posts it to the existing message endpoint, so
+     * intent classification, task creation and Pi Agent execution are unchanged.
+     */
+    transcribe: (audio: Blob, filename = 'utterance.webm') => {
+      const form = new FormData()
+      form.append('file', audio, filename)
+      return request<Transcript>('/api/voice/transcribe', {
+        method: 'POST',
+        body: form,
+      })
+    },
+
+    /** The synthesised MP3 for one narration line, or null when there is none. */
+    audioUrl: (lineId: string) => `/api/voice/audio/${encodeURIComponent(lineId)}`,
   },
 
   settings: {

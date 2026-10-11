@@ -36,3 +36,6 @@ Thumbs.db
 
 # Locally installed tooling (Pi Coding Agent)
 .tools/
+
+# TypeScript incremental build info (generated)
+*.tsbuildinfo

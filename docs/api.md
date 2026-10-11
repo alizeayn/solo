@@ -554,3 +554,31 @@ FastAPI's standard shape:
 Validation failures return `422` with `detail` as a list of
 `{loc, msg, type}` entries. The frontend client normalizes both into a single
 message string.
+
+
+---
+
+## Voice
+
+Speech input and output. See [voice.md](voice.md) and
+[`elevenlabs-docs/`](../elevenlabs-docs/) for the verified API notes.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/voice/state` | Transport, `audio_available`, model/voice selection, queue depth |
+| `GET` | `/api/voice/history?limit=` | Recent narration lines, newest last |
+| `POST` | `/api/voice/interrupt` | Barge-in: stop speech, drop lower-priority lines |
+| `POST` | `/api/voice/resume` | Resume after the user has stopped speaking |
+| `GET` | `/api/voice/models` | Speech models the configured account can use (400 without a key) |
+| `GET` | `/api/voice/voices?limit=` | Voices available to the account |
+| `PUT` | `/api/voice/settings` | Save `model_id`, `voice_id`, `stt_model_id` |
+| `POST` | `/api/voice/transcribe` | One recorded utterance (multipart) → text |
+| `GET` | `/api/voice/audio/{line_id}` | The synthesised MP3 for one line (404 when none) |
+
+`/api/voice/models` and `/api/voice/voices` require a saved ElevenLabs API key
+and return **400 naming the key** when one is absent — never a misleading
+"missing model". `/api/voice/transcribe` refuses an empty recording locally
+rather than billing for silence.
+
+The `narration` WebSocket channel carries every line; `voice` carries
+interrupt/resume events.

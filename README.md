@@ -447,9 +447,10 @@ file exists on disk — and passes with the globally installed `pi` removed from
 ├── frontend/src/
 │   ├── components/     header, auth, settings, project dialog, Dockview, voice
 │   ├── panels/         Conversation, Activity, Write, Inspector, Plan, State
-│   ├── hooks/          theme, WebSocket, media query
+│   ├── hooks/          theme, WebSocket, media query, voice input, playback
 │   └── state/          workspace and theme providers
-├── docs/               architecture, projects, pi-agent, orchestrator, updating, api
+├── docs/               architecture, projects, pi-agent, orchestrator, voice, api
+├── elevenlabs-docs/    verified ElevenLabs API notes (models, TTS, STT, voices)
 ├── "Pi Agent Docs"/    Pi protocol reference (v1.1.0) + integration notes
 ├── scripts/            dev, e2e, e2e-live, backup, restore
 ├── solo.sh             install, run, update
@@ -497,9 +498,11 @@ and start.
 - [docs/projects.md](docs/projects.md) — the project model and `.solo` store
 - [docs/pi-agent.md](docs/pi-agent.md) — how Pi is integrated, isolated and configured
 - [docs/orchestrator.md](docs/orchestrator.md) — planning, prioritisation and state
+- [docs/voice.md](docs/voice.md) — the voice loop, ElevenLabs integration, and its limits
 - [docs/updating.md](docs/updating.md) — in-place updates, versioning, rollback
 - [docs/deployment.md](docs/deployment.md) — Docker, HTTPS, backup and restore
 - [docs/api.md](docs/api.md) — REST and WebSocket reference
+- [elevenlabs-docs/](elevenlabs-docs/) — verified ElevenLabs API notes (models, TTS, STT, voices)
 
 ## License
 

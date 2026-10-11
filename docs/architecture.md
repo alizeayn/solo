@@ -325,3 +325,32 @@ of truth. `DockLayout` picks the matching Dockview theme explicitly.
 | A reasoning or voice model | Implement `OrchestratorBrain`'s four methods, or add a second consumer of `OrchestrationState`. |
 | A different verification tool | Implement the `CheckResult` shape in `services/checks.py`; the UI renders any `tool`/`outcome`. |
 | A storage backend | Swap the engine in `db.py`; repositories are the only DB consumers. |
+
+
+---
+
+## Voice
+
+Voice is an architectural layer, not a feature bolted onto the chat.
+
+`NarrationService` turns agent activity into short, ordered, non-overlapping
+spoken lines and hands them to a **transport**. `ElevenLabsTransport` implements
+that protocol using ElevenLabs text to speech; the default transport records
+instead, which is what makes the whole pipeline testable without audio hardware
+or an API key.
+
+The important separation is between **activity** and **milestones**:
+
+| | Pi Agent Activity | Orchestrator Milestones |
+|---|---|---|
+| Answers | what is the agent *doing* | what does the work *mean* |
+| Unit | an event | a phase transition |
+| Consumer | Activity panel | Milestone panel **and** the voice channel |
+
+Reading raw activity aloud would recite tool calls. The voice channel consumes
+the same structured milestone objects the UI renders — never raw events, and never
+re-derived from text. Speech input is symmetrical: transcription produces text
+that is posted to the existing message endpoint, so the agent pipeline is
+untouched by the fact that the text was spoken.
+
+See [voice.md](voice.md).

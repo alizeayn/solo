@@ -27,6 +27,7 @@ import {
   type ConnectionState,
   type Message,
   type MessageDispatchResult,
+  type Milestone,
   type NarrationLine,
   type OrchestrationView,
   type Project,
@@ -55,6 +56,8 @@ interface WorkspaceContextValue {
   lastCheck: CheckResult | null
   /** Lines the voice channel has said or queued, oldest first. */
   narration: NarrationLine[]
+  /** The Orchestrator's structured milestones for the current task. */
+  milestones: Milestone[]
   connection: ConnectionState
   busy: boolean
   error: string | null
@@ -109,6 +112,7 @@ export function WorkspaceProvider({
   const [orchestration, setOrchestration] = useState<OrchestrationView['summary'] | null>(null)
   const [lastCheck, setLastCheck] = useState<CheckResult | null>(null)
   const [narration, setNarration] = useState<NarrationLine[]>([])
+  const [milestones, setMilestones] = useState<Milestone[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -262,6 +266,19 @@ export function WorkspaceProvider({
       setOrchestration(envelope.payload as unknown as OrchestrationView['summary'])
       return
     }
+    if (envelope.channel === 'milestone') {
+      const milestone = envelope.payload as unknown as Milestone
+      // A milestone may arrive more than once (queued, then updated), so upsert
+      // by id rather than appending blindly.
+      setMilestones((previous) => {
+        const index = previous.findIndex((item) => item.id === milestone.id)
+        if (index === -1) return [...previous, milestone]
+        const next = [...previous]
+        next[index] = { ...next[index], ...milestone }
+        return next
+      })
+      return
+    }
     if (envelope.channel === 'narration') {
       const line = envelope.payload as unknown as NarrationLine
       if (!line.text) return
@@ -357,6 +374,7 @@ export function WorkspaceProvider({
     orchestration,
     lastCheck,
     narration,
+    milestones,
     connection,
     busy,
     error,

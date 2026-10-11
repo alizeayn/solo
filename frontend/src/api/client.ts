@@ -10,6 +10,7 @@ import type {
   Account,
   AppEvent,
   FileContent,
+  Milestone,
   NarrationLine,
   VoiceState,
   FileLimits,
@@ -124,6 +125,12 @@ export const api = {
       }),
     revokeOtherSessions: () =>
       request<Account>('/api/account/sessions/revoke', { method: 'POST' }),
+  },
+
+  milestones: {
+    list: () => request<Milestone[]>('/api/milestones'),
+    forTask: (taskId: string) =>
+      request<Milestone[]>(`/api/milestones/task/${taskId}`),
   },
 
   voice: {

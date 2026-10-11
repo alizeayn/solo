@@ -487,6 +487,31 @@ export interface MessageDispatchResult {
   task_id: string | null
 }
 
+/** The Orchestrator's structured reading of a task's progress. */
+export interface Milestone {
+  id: string
+  task_id: string
+  project_id?: string | null
+  stage:
+    | 'understanding'
+    | 'planning'
+    | 'implementing'
+    | 'verifying'
+    | 'completed'
+    | 'blocked'
+    | 'cancelled'
+  title: string
+  detail: string | null
+  status: 'pending' | 'active' | 'done' | 'failed'
+  /** The concrete events that justified this milestone. */
+  evidence: string[]
+  sequence: number
+  created_at: string
+  updated_at: string
+  /** `orchestrator-model` when the wording came from OpenRouter. */
+  worded_by: string
+}
+
 /** One line the voice channel has said, or is about to say. */
 export interface NarrationLine {
   id: string
@@ -518,7 +543,16 @@ export interface VoiceState {
 export type ConnectionState = 'connecting' | 'open' | 'closed'
 
 export interface WsEnvelope {
-  channel: 'event' | 'task' | 'message' | 'orchestration' | 'narration' | 'voice' | 'ready' | 'error'
+  channel:
+    | 'event'
+    | 'task'
+    | 'message'
+    | 'orchestration'
+    | 'milestone'
+    | 'narration'
+    | 'voice'
+    | 'ready'
+    | 'error'
   payload: Record<string, unknown>
 }
 

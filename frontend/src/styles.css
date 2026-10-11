@@ -1973,3 +1973,168 @@ textarea {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+/* ------------------------------------------------------------------ */
+/* Milestones                                                          */
+/* ------------------------------------------------------------------ */
+.milestones {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.milestone {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 10px;
+  padding: 9px 12px 9px 4px;
+  position: relative;
+}
+
+/* A continuous rail makes the sequence readable at a glance. */
+.milestone__rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.milestone__rail::before {
+  content: '';
+  position: absolute;
+  top: 22px;
+  bottom: -10px;
+  width: 1px;
+  background: var(--border);
+}
+
+.milestone:last-child .milestone__rail::before {
+  display: none;
+}
+
+.milestone__marker {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  flex: none;
+  z-index: 1;
+}
+
+.milestone--active .milestone__marker {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  animation: milestone-pulse 1.8s ease-in-out infinite;
+}
+
+.milestone--success .milestone__marker {
+  border-color: rgba(53, 196, 138, 0.5);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.milestone--danger .milestone__marker {
+  border-color: rgba(255, 107, 107, 0.5);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.milestone__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.milestone__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.milestone__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.milestone--neutral .milestone__title,
+.milestone--success .milestone__title {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.milestone__detail {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* A blinking caret makes the reveal read as writing, not as a delayed result. */
+.milestone__caret {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  margin-left: 2px;
+  vertical-align: -1px;
+  background: var(--accent);
+  animation: milestone-caret 1s steps(2, start) infinite;
+}
+
+.milestone__evidence {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.milestone__evidence-item {
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes milestone-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(91, 141, 239, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(91, 141, 239, 0.08);
+  }
+}
+
+@keyframes milestone-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .milestone--active .milestone__marker,
+  .milestone__caret {
+    animation: none;
+  }
+}

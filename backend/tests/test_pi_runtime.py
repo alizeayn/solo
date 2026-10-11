@@ -176,8 +176,13 @@ def test_agent_dir_lives_inside_solos_data_directory(settings_factory):
     assert runtime.layout().runtime_dir == (settings.app_data_dir / "pi-runtime").resolve()
 
 
-def test_the_host_pi_directory_is_never_touched(settings_factory, monkeypatch, tmp_path):
-    """A decoy ~/.pi/agent must remain untouched by any Solo operation."""
+def test_the_host_pi_directory_is_never_touched(settings_factory, monkeypatch, tmp_path, fake_npm):
+    """A decoy ~/.pi/agent must remain untouched by any Solo operation.
+
+    Uses the offline `fake_npm` fixture: a unit test must not reach the network,
+    and performing a real `npm install` here made the suite slow, flaky and
+    dependent on connectivity.
+    """
     decoy_home = tmp_path / "home"
     decoy_agent = decoy_home / ".pi" / "agent"
     decoy_agent.mkdir(parents=True)
@@ -190,7 +195,8 @@ def test_the_host_pi_directory_is_never_touched(settings_factory, monkeypatch, t
 
     runtime.initialize()
     asyncio_run(runtime.status())
-    asyncio_run(runtime.install())  # no npm on PATH → reports failure, writes nothing here
+    installed = asyncio_run(runtime.install())
+    assert installed.ok is True, installed.detail
 
     assert sentinel.read_text() == '{"openrouter": {"type": "api_key", "key": "HOST-KEY"}}'
     assert sorted(p.name for p in decoy_agent.iterdir()) == ["auth.json"]

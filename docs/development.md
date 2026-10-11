@@ -81,6 +81,9 @@ E2E_PORT=8123 ./scripts/e2e.sh
 | `tests/test_api_messages.py` | Chat / steer / stop / new-task routing |
 | `tests/test_orchestrator.py` | Restart recovery, admin bootstrap |
 | `tests/test_services_extra.py` | Provider error handling (stubbed HTTP), event bus, adapter failure, context snapshot |
+| `tests/test_pi_runtime.py` | **Isolation**: `PATH` is never used, the agent directory is never `~/.pi/agent`, install/verify/failure handling |
+| `tests/test_account_and_voice.py` | Account changes and the narration pipeline (ordering, coalescing, barge-in) |
+| `tests/test_project_files.py` | File read/write/upload path safety |
 | `frontend …/DirectoryBrowser.test.tsx` | Directory listing, navigation, blocked path surfacing, selection semantics |
 | `frontend …/ProjectDialog.test.tsx` | Create (managed and custom location), open in place, import, validation |
 

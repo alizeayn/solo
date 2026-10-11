@@ -5,10 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · **2.2 (isolated runtime, in-place updates)** ✅ |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · **2.3 (voice foundation, theme, accounts)** ✅ |
 | **Last updated** | 2026-10-10 |
-| **Automated checks** | **513 passing** — 339 backend, 82 frontend, 39 live end-to-end (+53 simulator e2e) |
-| **Defects** | 23 found, 22 fixed with regression coverage, 1 environment gap |
+| **Automated checks** | **478 passing** — 375 backend, 103 frontend (+39 live e2e, +53 simulator e2e) |
+| **Defects** | 27 found, 26 fixed with regression coverage, 1 environment gap |
 
 ---
 
@@ -50,6 +50,16 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 26 | Verification | [acceptance-criteria-0026.md](05-verification/acceptance-criteria-0026.md) |
 | 27 | Summary | [summary-0027.md](06-summary/summary-0027.md) |
 
+### Phase 2.3 — Voice foundation, theme system, accounts
+
+| # | Stage | Document |
+|---|---|---|
+| 28 | Planning | [review-and-priorities-0028.md](01-planning/review-and-priorities-0028.md) |
+| 29 | Implementation | [voice-foundation-theme-account-0029.md](02-implementation/voice-foundation-theme-account-0029.md) |
+| 30 | Defects | [defect-log-0030.md](04-defects/defect-log-0030.md) |
+| 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
+| 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
+
 ### Phase 1.5 — Solo, project model, public readiness
 
 | # | Stage | Document |
@@ -86,6 +96,7 @@ project-report/
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
 | 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
+| 2.3 | 2026-10-10 | **Voice foundation**: a narration pipeline (selection, ordering, coalescing, rate limiting, barge-in) with a pluggable transport; **theme system** (dark / light / system, no flash, Dockview); **account management** (username and password from the workspace); professional README; specification reviewed and corrected | 478 (375 BE · 103 FE) + 39 live e2e + 53 simulator e2e | D-24…D-27 |
 
 ---
 
@@ -95,6 +106,12 @@ project-report/
 critical path was exercised end to end: sign in → create or import a project →
 ask a question → start a coding task → watch live normalised events → steer the
 running task → reach a terminal status → survive a restart.
+
+**Phase 2.3** made the product's stated direction real. Voice is now an *output
+channel with policy* — what is worth saying, in what order, what to drop, and when
+to stop — built and tested before audio exists, so Phase 4 attaches a transport and
+nothing else changes. Solo also gained a dark/light/auto theme, account management
+from the workspace, and a README written for a visitor rather than the author.
 
 **Phase 2.2** removed Solo's last dependency on the machine it runs on. It now
 installs, owns and invokes **its own Pi Agent**, with its own configuration
@@ -134,4 +151,5 @@ explicit "Phase 4" note rather than pretending to work.
 | Docker image still not built — no daemon access (D-08) | [20 §D-08](04-defects/defect-log-0008.md) |
 | No version-range compatibility gate in the updater | [26 §6](05-verification/acceptance-criteria-0026.md) |
 | Live test used `opencode-go`; OpenRouter returned 402 (no credit) | [22 §7](06-summary/summary-0022.md) |
-| Voice (Phase 4) and spoken progress (Phase 5) not implemented, by instruction | [22 §8](06-summary/summary-0022.md) |
+| Voice input and audio playback not implemented — the narration pipeline is ready | [32 §5](06-summary/summary-0032.md) |
+| No automated visual verification (no browser-driven tests) | [31 §9](05-verification/acceptance-criteria-0031.md) |

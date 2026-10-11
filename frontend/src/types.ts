@@ -29,11 +29,21 @@ export type Intent =
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
+export interface Account {
+  username: string
+  role: string
+  created_at: string | null
+  active_sessions: number
+  has_session: boolean
+}
+
 export interface AuthStatus {
   initialized: boolean
   authenticated: boolean
   username: string | null
 }
+
+export type ThemePreference = 'light' | 'dark' | 'system'
 
 export interface SecretStatus {
   configured: boolean
@@ -58,6 +68,7 @@ export interface AppSettings {
   progress_speech_enabled: boolean
   pi_version: string | null
   pi_rpc_available: boolean
+  theme: ThemePreference
 }
 
 export type SettingsPatch = Partial<{
@@ -76,6 +87,7 @@ export type SettingsPatch = Partial<{
   checks_enabled: boolean
   voice_enabled: boolean
   progress_speech_enabled: boolean
+  theme: ThemePreference
 }>
 
 export interface ConnectionTestResult {
@@ -475,10 +487,38 @@ export interface MessageDispatchResult {
   task_id: string | null
 }
 
+/** One line the voice channel has said, or is about to say. */
+export interface NarrationLine {
+  id: string
+  text: string
+  kind: string
+  priority: number
+  task_id: string | null
+  project_id: string | null
+  created_at: string
+  spoken_at: string | null
+  spoken?: boolean
+}
+
+export interface VoiceState {
+  enabled: boolean
+  transport: string
+  /** False until an audio transport exists (Phase 4). */
+  audio_available: boolean
+  listening: boolean
+  queued: number
+  dropped: number
+  spoken: number
+  recent: NarrationLine[]
+  voice_enabled?: boolean
+  speech_enabled?: boolean
+  phase?: string
+}
+
 export type ConnectionState = 'connecting' | 'open' | 'closed'
 
 export interface WsEnvelope {
-  channel: 'event' | 'task' | 'message' | 'orchestration' | 'ready' | 'error'
+  channel: 'event' | 'task' | 'message' | 'orchestration' | 'narration' | 'voice' | 'ready' | 'error'
   payload: Record<string, unknown>
 }
 

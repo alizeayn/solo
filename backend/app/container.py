@@ -18,9 +18,11 @@ from .config import Settings
 from .db import create_engine, create_session_factory
 from .migrations import migrate
 from .security import SecretCipher
+from .services.account_service import AccountService
 from .services.auth_service import AuthService
 from .services.checks import ChecksService
 from .services.event_bus import EventBus
+from .services.narration import NarrationService
 from .services.orchestrator import OrchestratorService
 from .services.orchestrator_brain import OrchestratorBrain
 from .services.pi_config import PiConfigService
@@ -41,6 +43,7 @@ class Container:
     bus: EventBus
     adapter: CodingAgentAdapter
     auth: AuthService
+    account: AccountService
     settings_service: SettingsService
     store: ProjectStoreService
     projects: ProjectService
@@ -48,6 +51,7 @@ class Container:
     pi_runtime: PiRuntime
     checks: ChecksService
     brain: OrchestratorBrain
+    narration: NarrationService
     orchestrator: OrchestratorService
     backend_name: str
     #: Result of the schema migration performed at startup.
@@ -76,6 +80,10 @@ class Container:
         brain = OrchestratorBrain(
             settings=settings, settings_service=settings_service
         )
+        # Voice-native output. The default transport records rather than speaks,
+        # so the whole narration pipeline (ordering, coalescing, rate limiting,
+        # barge-in) is exercised today; Phase 4 attaches audio to it.
+        narration = NarrationService(bus=bus)
 
         # The adapter needs the launch configuration, which lives in settings.
         backend_name = resolve_backend(settings)
@@ -94,6 +102,7 @@ class Container:
             bus=bus,
             adapter=adapter,
             auth=AuthService(session_factory, settings),
+            account=AccountService(session_factory),
             settings_service=settings_service,
             store=store,
             projects=ProjectService(session_factory, settings, store),
@@ -101,6 +110,7 @@ class Container:
             pi_runtime=pi_runtime,
             checks=checks,
             brain=brain,
+            narration=narration,
             orchestrator=OrchestratorService(
                 session_factory=session_factory,
                 bus=bus,
@@ -108,6 +118,7 @@ class Container:
                 settings=settings,
                 store=store,
                 brain=brain,
+            narration=narration,
                 checks=checks,
             ),
             backend_name=backend_name,
@@ -116,6 +127,7 @@ class Container:
 
     async def close(self) -> None:
         await self.orchestrator.shutdown()
+        await self.narration.stop()
         await self.engine.dispose()
 
     @property

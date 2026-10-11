@@ -16,7 +16,21 @@ from app.main import create_app
 from app.services.checks import ChecksService, find_python_files
 from tests.conftest import ADMIN
 
-PYRIGHT = shutil.which("pyright")
+def _find_pyright() -> str | None:
+    """Locate pyright without depending on the ambient PATH.
+
+    The backend installs pyright into the project virtualenv, which is not on
+    PATH for a bare `../venv/bin/python -m pytest`. Resolving it explicitly
+    means the pyright tests actually run instead of silently skipping.
+    """
+    found = shutil.which("pyright")
+    if found:
+        return found
+    candidate = Path(__file__).resolve().parents[2] / "venv" / "bin" / "pyright"
+    return str(candidate) if candidate.is_file() else None
+
+
+PYRIGHT = _find_pyright()
 requires_pyright = pytest.mark.skipif(PYRIGHT is None, reason="pyright is not installed")
 
 
@@ -43,12 +57,14 @@ def test_find_python_files_skips_vendor_and_hidden_directories(tmp_path):
     assert sorted(found) == ["pkg/mod.py", "script.py"]
 
 
+@requires_pyright
 async def test_checks_are_skipped_without_python(tmp_path, settings_factory):
+    """The reason must be "no Python files", not "the tool is missing"."""
     root = tmp_path / "repo"
     root.mkdir()
     (root / "README.md").write_text("# nothing to check")
 
-    service = ChecksService(settings_factory(pyright_executable=PYRIGHT or "pyright"))
+    service = ChecksService(settings_factory(pyright_executable=PYRIGHT))
     result = await service.run_for_project(root)
     assert result.outcome == CheckOutcome.SKIPPED.value
     assert "No Python files" in result.summary

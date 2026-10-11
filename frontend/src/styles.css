@@ -8,6 +8,12 @@
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Tokens — dark (default) and light                                   */
+/* ------------------------------------------------------------------ */
+/* One palette per theme; every component consumes only these variables, so
+   switching appearance is a single attribute on <html> and nothing else has to
+   know which theme is active. */
 :root {
   --bg: #0a0d13;
   --surface: #10141c;
@@ -31,11 +37,47 @@
   --radius: 10px;
   --radius-lg: 14px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --overlay: rgba(4, 6, 10, 0.72);
+  --scrollbar: #2b3442;
+  --scrollbar-hover: #3a4557;
+  --gradient-from: #0d1220;
+  --gradient-to: #121a2b;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
   color-scheme: dark;
+}
+
+/* Light theme. Tuned for contrast rather than by inverting the dark palette:
+   surfaces stay warm-neutral, the accent darkens so it remains legible on
+   white, and the "soft" tones become tints rather than glows. */
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e8ebf0;
+  --border: #dfe3ea;
+  --border-strong: #c6ccd8;
+  --text: #171b22;
+  --text-muted: #5a6473;
+  --text-faint: #8791a1;
+  --accent: #2f6fe4;
+  --accent-soft: rgba(47, 111, 228, 0.1);
+  --accent-strong: #1f57c3;
+  --success: #12805c;
+  --success-soft: rgba(18, 128, 92, 0.1);
+  --danger: #c9353a;
+  --danger-soft: rgba(201, 53, 58, 0.09);
+  --warning: #a06000;
+  --warning-soft: rgba(160, 96, 0, 0.1);
+  --shadow: 0 10px 30px rgba(16, 24, 40, 0.12);
+  --overlay: rgba(20, 24, 32, 0.42);
+  --scrollbar: #c9cfd9;
+  --scrollbar-hover: #aab3c1;
+  --gradient-from: #eef2fb;
+  --gradient-to: #f7f9fd;
+  color-scheme: light;
 }
 
 /* ------------------------------------------------------------------ */
@@ -85,14 +127,14 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2b3442;
+  background: var(--scrollbar);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a4557;
+  background: var(--scrollbar-hover);
   background-clip: content-box;
 }
 
@@ -116,7 +158,7 @@ textarea {
 
 .btn:hover:not(:disabled) {
   background: var(--surface-3);
-  border-color: #3c4859;
+  border-color: var(--border-strong);
 }
 
 .btn:active:not(:disabled) {
@@ -126,7 +168,7 @@ textarea {
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #07101f;
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -305,7 +347,7 @@ textarea {
   height: 26px;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--accent), #8b6df9);
-  color: #06101f;
+  color: #ffffff;
   font-weight: 800;
   font-size: 13px;
 }
@@ -779,7 +821,7 @@ textarea {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 10, 0.72);
+  background: var(--overlay);
   display: grid;
   place-items: center;
   padding: 22px;
@@ -847,8 +889,8 @@ textarea {
   padding: 10px 12px;
   border-radius: var(--radius);
   border: 1px solid rgba(255, 107, 107, 0.35);
-  background: #1d1319;
-  color: #ffc9c9;
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 13px;
   box-shadow: var(--shadow);
 }
@@ -897,7 +939,8 @@ textarea {
 /* ------------------------------------------------------------------ */
 /* Dockview theming to match the app                                   */
 /* ------------------------------------------------------------------ */
-.dockview-theme-abyss {
+.dockview-theme-abyss,
+.dockview-theme-light {
   --dv-background-color: var(--bg);
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tabs-and-actions-container-background-color: var(--surface);
@@ -917,11 +960,13 @@ textarea {
   --dv-drag-over-border-color: var(--accent);
 }
 
-.dockview-theme-abyss .dv-tab {
+.dockview-theme-abyss .dv-tab,
+.dockview-theme-light .dv-tab {
   padding: 0 12px;
 }
 
-.dockview-theme-abyss .dv-tab.dv-active-tab {
+.dockview-theme-abyss .dv-tab.dv-active-tab,
+.dockview-theme-light .dv-tab.dv-active-tab {
   font-weight: 600;
 }
 
@@ -1537,7 +1582,7 @@ textarea {
   display: block;
   width: 2px;
   border-radius: 2px;
-  background: #07101f;
+  background: #ffffff;
   height: 6px;
   opacity: 0.85;
 }
@@ -1696,5 +1741,235 @@ textarea {
 .runtime-card__detail {
   font-size: 12.5px;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Appearance control                                                  */
+/* ------------------------------------------------------------------ */
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.theme-toggle__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.theme-toggle__option:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.theme-toggle__option--active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.theme-toggle--compact .theme-toggle__option {
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sign-in / first-run                                                 */
+/* ------------------------------------------------------------------ */
+.auth {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  min-height: 100%;
+  background: var(--bg);
+}
+
+.auth__panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 48px clamp(28px, 6vw, 72px);
+  background: linear-gradient(160deg, var(--gradient-from), var(--gradient-to));
+  border-right: 1px solid var(--border);
+}
+
+.auth__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.auth__brand-name {
+  font-size: 17px;
+}
+
+.auth__headline {
+  margin: 6px 0 0;
+  font-size: clamp(24px, 3vw, 32px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.auth__lede {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.auth__points {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.auth__points li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auth__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.auth__form-panel {
+  display: grid;
+  place-items: center;
+  padding: 40px 28px;
+}
+
+.auth__form {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.auth__submit {
+  justify-content: center;
+  padding: 11px 16px;
+  font-size: 14px;
+}
+
+.auth__hint {
+  text-align: center;
+  line-height: 1.5;
+}
+
+@media (max-width: 860px) {
+  .auth {
+    grid-template-columns: 1fr;
+  }
+
+  .auth__panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 32px 24px;
+  }
+
+  .auth__points {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Voice panel                                                         */
+/* ------------------------------------------------------------------ */
+.voice-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.voice-panel__orb {
+  padding: 12px 12px 0;
+  flex: none;
+}
+
+.voice-channel__note {
+  padding: 0 12px 8px;
+  flex: none;
+}
+
+.voice-channel__lines {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.voice-channel__empty {
+  padding: 16px 4px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.voice-line {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left-width: 2px;
+  background: var(--surface-2);
+}
+
+.voice-line--error {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.voice-line--summary,
+.voice-line--outcome {
+  border-left-color: var(--success);
+}
+
+.voice-line--progress {
+  border-left-color: var(--accent);
+}
+
+.voice-line__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-line__text {
+  font-size: 13px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }

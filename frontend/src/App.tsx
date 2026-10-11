@@ -8,13 +8,21 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api/client'
-import LoginView from './components/LoginView'
-import SetupView from './components/SetupView'
+import AuthView from './components/AuthView'
 import WorkspaceView from './components/WorkspaceView'
+import { ThemeProvider } from './state/ThemeProvider'
 import { WorkspaceProvider } from './state/WorkspaceProvider'
 import type { AuthStatus } from './types'
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppRoutes />
+    </ThemeProvider>
+  )
+}
+
+function AppRoutes() {
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,11 +64,11 @@ export default function App() {
   }
 
   if (!auth.initialized) {
-    return <SetupView onComplete={refreshAuth} />
+    return <AuthView mode="setup" onComplete={refreshAuth} />
   }
 
   if (!auth.authenticated) {
-    return <LoginView onComplete={refreshAuth} />
+    return <AuthView mode="login" onComplete={refreshAuth} />
   }
 
   return (

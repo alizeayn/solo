@@ -111,6 +111,7 @@ class SettingsService:
             progress_speech_enabled=plain("progress_speech_enabled", "true") == "true",
             pi_version=pi_info.version,
             pi_rpc_available=pi_info.rpc_supported,
+            theme=plain("theme", "dark") or "dark",
         )
 
     # ------------------------------------------------------------------ #

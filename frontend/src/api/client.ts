@@ -7,8 +7,11 @@
  */
 
 import type {
+  Account,
   AppEvent,
   FileContent,
+  NarrationLine,
+  VoiceState,
   FileLimits,
   PiInstallResult,
   PiRuntime,
@@ -106,6 +109,34 @@ export const api = {
   },
 
   health: () => request<Health>('/api/health'),
+
+  account: {
+    get: () => request<Account>('/api/account'),
+    changeUsername: (newUsername: string, currentPassword: string) =>
+      request<Account>('/api/account/username', {
+        method: 'PUT',
+        body: JSON.stringify({ new_username: newUsername, current_password: currentPassword }),
+      }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request<Account>('/api/account/password', {
+        method: 'PUT',
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    revokeOtherSessions: () =>
+      request<Account>('/api/account/sessions/revoke', { method: 'POST' }),
+  },
+
+  voice: {
+    state: () => request<VoiceState>('/api/voice/state'),
+    history: (limit = 50) => request<NarrationLine[]>(`/api/voice/history?limit=${limit}`),
+    /** Barge-in: stop speech and drop lower-priority announcements. */
+    interrupt: (reason = 'user') =>
+      request<VoiceState>('/api/voice/interrupt', {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }),
+    resume: () => request<VoiceState>('/api/voice/resume', { method: 'POST' }),
+  },
 
   settings: {
     get: () => request<AppSettings>('/api/settings'),

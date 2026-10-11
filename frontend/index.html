@@ -1,14 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta
       name="description"
-      content="Voice-first AI workspace for driving a coding agent through voice and text."
+      content="Solo — a voice-first AI workspace for working on real projects with a coding agent."
     />
     <title>Solo — voice-first AI workspace</title>
+    <script>
+      // Apply the saved theme before first paint so there is no flash of the
+      // wrong appearance. Kept inline and dependency-free on purpose; the
+      // authoritative copy of this logic lives in src/hooks/useTheme.ts.
+      (function () {
+        try {
+          var stored = localStorage.getItem('solo.theme') || 'dark'
+          var theme =
+            stored === 'system'
+              ? window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : stored
+          document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark'
+        } catch (error) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

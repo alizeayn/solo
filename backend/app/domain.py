@@ -125,6 +125,14 @@ class PlannedTaskStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class Theme(str, Enum):
+    """Appearance preference. ``system`` follows the operating system."""
+
+    DARK = "dark"
+    LIGHT = "light"
+    SYSTEM = "system"
+
+
 class CheckOutcome(str, Enum):
     """Result of a static-analysis run."""
 
@@ -155,6 +163,7 @@ PLAIN_SETTING_KEYS: frozenset[str] = frozenset(
         "pi_reuse_openrouter_key",
         "orchestrator_enabled",
         "checks_enabled",
+        "theme",
         "voice_enabled",
         "progress_speech_enabled",
     }

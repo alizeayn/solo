@@ -21,16 +21,19 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import type { ConnectionTestResult, SettingsPatch } from '../types'
+import AccountSettings from './AccountSettings'
 import OrchestratorSettings from './OrchestratorSettings'
 import PiAgentSettings from './PiAgentSettings'
+import ThemeToggle from './ThemeToggle'
 
-type Tab = 'orchestrator' | 'pi' | 'voice' | 'preferences'
+type Tab = 'account' | 'orchestrator' | 'pi' | 'voice' | 'preferences'
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: 'orchestrator', label: 'Orchestrator', hint: 'OpenRouter · intent, planning, summaries' },
   { id: 'pi', label: 'Pi Agent', hint: 'Provider, credentials, model' },
-  { id: 'voice', label: 'Voice', hint: 'ElevenLabs (Phase 4)' },
-  { id: 'preferences', label: 'Preferences', hint: 'Behaviour and checks' },
+  { id: 'voice', label: 'Voice', hint: 'Voice-native conversation' },
+  { id: 'preferences', label: 'Appearance & behaviour', hint: 'Theme, checks, speech' },
+  { id: 'account', label: 'Account', hint: 'Username, password, sessions' },
 ]
 
 export default function SettingsView({ onClose }: { onClose: () => void }) {
@@ -73,6 +76,7 @@ export default function SettingsView({ onClose }: { onClose: () => void }) {
           {tab === 'pi' && <PiAgentSettings />}
           {tab === 'voice' && <VoiceSettings />}
           {tab === 'preferences' && <PreferencesSettings />}
+          {tab === 'account' && <AccountSettings />}
         </div>
 
         <footer className="settings-shell__foot">
@@ -258,6 +262,21 @@ function PreferencesSettings() {
   return (
     <div className="settings-pane">
       <section className="settings-section">
+        <h3 className="settings-section__title">Appearance</h3>
+        <div className="settings-grid">
+          <div className="field">
+            <label>Theme</label>
+            <ThemeToggle />
+            <span className="hint">
+              Solo ships a dark and a light theme. "Auto" follows your operating
+              system, and the choice is saved to your account so it follows you to
+              another browser.
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section">
         <h3 className="settings-section__title">Behaviour</h3>
         <div className="settings-grid">
           <label className="checkbox">
@@ -267,7 +286,8 @@ function PreferencesSettings() {
               disabled={busy === 'voice_enabled'}
               onChange={(event) => void toggle('voice_enabled', event.target.checked)}
             />
-            Enable live voice conversation (Phase 4)
+            Enable the voice channel (narration is recorded and shown; audio
+            arrives in Phase 4)
           </label>
           <label className="checkbox">
             <input
@@ -276,7 +296,7 @@ function PreferencesSettings() {
               disabled={busy === 'progress_speech_enabled'}
               onChange={(event) => void toggle('progress_speech_enabled', event.target.checked)}
             />
-            Speak short progress announcements (Phase 5)
+            Allow spoken progress announcements once audio is available
           </label>
           <span className="hint">
             Progress is always shown visually, so voice can be disabled without losing

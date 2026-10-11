@@ -128,6 +128,53 @@ cannot truncate a file.
 
 ---
 
+## Account
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/account` | Username, role, creation date, signed-in session count |
+| `PUT` | `/api/account/username` | `{new_username, current_password}` — the password is required even when authenticated |
+| `PUT` | `/api/account/password` | `{current_password, new_password}` — revokes every **other** session, keeps this one |
+| `POST` | `/api/account/sessions/revoke` | Sign out other devices without changing the password |
+
+```json
+{"username": "admin", "role": "owner", "created_at": "2026-10-10T12:00:00Z",
+ "active_sessions": 2, "has_session": true}
+```
+
+The current password is required for both changes: a session proves the browser
+signed in at some point, not that the person at the keyboard owns the account, and
+this account can run code and edit files. A password is only ever stored as a
+salted scrypt hash and is never returned.
+
+---
+
+## Voice
+
+Solo's direction is voice-native: the conversation is the interface and speech is
+its primary output. These endpoints expose the **narration pipeline** — what Solo
+would say, in what order, and whether it is yielding to the user.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/voice/state` | Transport, whether audio is attached, queue depth, drops, recent lines |
+| `GET` | `/api/voice/history?limit=` | What Solo has said and is about to say |
+| `POST` | `/api/voice/interrupt` | `{reason}` — barge-in: stop speech, drop lower-priority lines |
+| `POST` | `/api/voice/resume` | Resume after the user stops speaking |
+
+```json
+{"transport": "recording", "audio_available": false, "listening": false,
+ "queued": 0, "dropped": 3, "spoken": 7, "phase": "narration-foundation",
+ "recent": [{"text": "The task is complete.", "kind": "outcome", "spoken": true}]}
+```
+
+`audio_available` is **false** until an audio transport is attached, and the UI
+shows the lines instead of claiming playback. Ordering, coalescing, rate limiting
+and barge-in are real and tested. A `narration` WebSocket channel carries each
+line as it is queued and again when it is delivered.
+
+---
+
 ## Health
 
 ### `GET /api/health`
@@ -486,6 +533,8 @@ Every frame is an envelope:
 | `event` | an `EventOut` object |
 | `task` | a `TaskOut` object (status/result changed) |
 | `message` | a `MessageOut` object (assistant messages) |
+| `narration` | a narration line, as it is queued and again when delivered |
+| `voice` | barge-in notices: `{event: "interrupt"|"resume", ...}` |
 | `orchestration` | the current `summary` of the project's orchestration state |
 
 The bus drops the oldest frame for a slow subscriber rather than blocking the

@@ -27,6 +27,7 @@ import {
   type ConnectionState,
   type Message,
   type MessageDispatchResult,
+  type NarrationLine,
   type OrchestrationView,
   type Project,
   type Task,
@@ -52,6 +53,8 @@ interface WorkspaceContextValue {
   orchestration: OrchestrationView['summary'] | null
   /** Most recent Pyright run, pushed as a `check.result` event. */
   lastCheck: CheckResult | null
+  /** Lines the voice channel has said or queued, oldest first. */
+  narration: NarrationLine[]
   connection: ConnectionState
   busy: boolean
   error: string | null
@@ -105,6 +108,7 @@ export function WorkspaceProvider({
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [orchestration, setOrchestration] = useState<OrchestrationView['summary'] | null>(null)
   const [lastCheck, setLastCheck] = useState<CheckResult | null>(null)
+  const [narration, setNarration] = useState<NarrationLine[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -256,6 +260,19 @@ export function WorkspaceProvider({
     }
     if (envelope.channel === 'orchestration') {
       setOrchestration(envelope.payload as unknown as OrchestrationView['summary'])
+      return
+    }
+    if (envelope.channel === 'narration') {
+      const line = envelope.payload as unknown as NarrationLine
+      if (!line.text) return
+      setNarration((previous) => appendUnique(previous, line).slice(-100))
+      return
+    }
+    if (envelope.channel === 'voice') {
+      // Interrupt / resume notices carry no spoken text.
+      if ((envelope.payload as { event?: string }).event === 'interrupt') {
+        setNarration((previous) => previous.slice(-100))
+      }
     }
   }, [])
 
@@ -339,6 +356,7 @@ export function WorkspaceProvider({
     settings,
     orchestration,
     lastCheck,
+    narration,
     connection,
     busy,
     error,

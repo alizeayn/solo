@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .api import account as account_api
 from .api import auth as auth_api
 from .api import files as files_api
 from .api import fs as fs_api
@@ -27,6 +28,7 @@ from .api import pi as pi_api
 from .api import projects as projects_api
 from .api import settings as settings_api
 from .api import tasks as tasks_api
+from .api import voice as voice_api
 from .api import ws as ws_api
 from .config import Settings, get_settings
 from .container import Container
@@ -98,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await container.auth.bootstrap_admin()
         await container.auth.purge_expired_sessions()
         await container.orchestrator.start()
+        await container.narration.start()
         logger.info(
             "application ready (agent=%s, data_dir=%s)",
             container.adapter_name,
@@ -123,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ws_api.router)
 
     # --- Authenticated routes (enforced by the CurrentUser dependency) ---
+    app.include_router(account_api.router)
     app.include_router(settings_api.router)
     app.include_router(projects_api.router)
     app.include_router(fs_api.router)
@@ -132,6 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pi_api.router)
     app.include_router(orchestrator_api.router)
     app.include_router(orchestration_api.router)
+    app.include_router(voice_api.router)
 
     _install_middleware(app, settings)
     _mount_frontend(app, settings)

@@ -42,6 +42,7 @@ from .checks import ChecksService
 from .context import build_snapshot, offline_answer
 from .event_bus import EventBus
 from .intent import IntentRouter
+from .narration import NarrationService, Priority
 from .orchestration_state import OrchestrationState, PlannedTask
 from .orchestrator_brain import IntentDecision, OrchestratorBrain
 from .project_paths import ProjectPathError, resolve_project_root
@@ -72,6 +73,7 @@ class OrchestratorService:
         store: ProjectStoreService | None = None,
         brain: OrchestratorBrain | None = None,
         checks: ChecksService | None = None,
+        narration: NarrationService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._bus = bus
@@ -81,6 +83,7 @@ class OrchestratorService:
         self._store = store
         self._brain = brain
         self._checks = checks
+        self._narration = narration
         self._runners: dict[str, asyncio.Task[None]] = {}
         #: Post-settle work (summary, checks, queue advance) kept off the
         #: notification path but tracked so shutdown can await it.
@@ -680,13 +683,15 @@ class OrchestratorService:
             await session.commit()
             payload = TaskOut.model_validate(fresh).model_dump(mode="json")
         await self._bus.publish({"channel": "task", "payload": payload})
-        await self._emit(
-            task_id=task.id,
-            project_id=project.id,
-            type=EventType.PROGRESS_SUMMARY.value,
-            message=f"Summary: {summary}",
-            data={"orchestrated": True, "source": "orchestrator-model"},
-        )
+        # The user-facing summary is the primary thing worth saying aloud.
+        if self._narration is not None:
+            await self._narration.announce(
+                summary,
+                kind="summary",
+                priority=int(Priority.IMPORTANT),
+                task_id=task.id,
+                project_id=project.id,
+            )
 
     async def _run_checks(self, project: Project, task: Task) -> None:
         """Run static checks over the files the agent changed."""
@@ -903,6 +908,39 @@ class OrchestratorService:
                 "project store sync failed for project %s", project_id, exc_info=True
             )
 
+    async def _narrate(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        task_id: str | None,
+        project_id: str | None,
+        data: dict | None = None,
+    ) -> None:
+        """Route only milestones to the voice channel.
+
+        Tool calls are never narrated: the user asked for concise summaries of
+        what the agent is doing, not a running commentary of every operation.
+        """
+        if self._narration is None:
+            return
+        if event_type == EventType.PROGRESS_SUMMARY.value:
+            await self._narration.announce(
+                message,
+                kind="progress",
+                priority=int(Priority.PROGRESS),
+                task_id=task_id,
+                project_id=project_id,
+            )
+        elif event_type == EventType.ERROR.value:
+            await self._narration.announce(
+                message,
+                kind="error",
+                priority=int(Priority.CRITICAL),
+                task_id=task_id,
+                project_id=project_id,
+            )
+
     async def _emit(
         self,
         *,
@@ -925,6 +963,9 @@ class OrchestratorService:
             await session.commit()
             payload = EventOut.model_validate(event).model_dump(mode="json")
         await self._bus.publish({"channel": "event", "payload": payload})
+        await self._narrate(
+            type, message, task_id=task_id, project_id=project_id, data=data
+        )
 
     async def _set_status(
         self,
@@ -976,6 +1017,24 @@ class OrchestratorService:
             # Summaries, static checks and queue advancement are enhancements:
             # they run after the user is told the task finished, never in front
             # of the notification.
+            # Say the outcome once, whatever the outcome is. The narration
+            # service drops a duplicate, so a richer summary that arrives next
+            # simply supersedes it.
+            if self._narration is not None:
+                outcome = {
+                    TaskStatus.COMPLETED: "The task is complete.",
+                    TaskStatus.CANCELLED: "The task was cancelled.",
+                    TaskStatus.FAILED: "The task failed.",
+                }.get(status)
+                if outcome:
+                    await self._narration.announce(
+                        outcome,
+                        kind="outcome",
+                        priority=int(Priority.IMPORTANT),
+                        task_id=task_id,
+                        project_id=project_id,
+                    )
+
             post = asyncio.create_task(
                 self._after_task_settled(project_id, task_id),
                 name=f"post-settle-{task_id[:8]}",

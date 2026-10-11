@@ -36,6 +36,28 @@ class AuthStatus(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Account
+# --------------------------------------------------------------------------- #
+class AccountOut(BaseModel):
+    username: str
+    role: str = "owner"
+    created_at: str | None = None
+    active_sessions: int = 1
+    has_session: bool = True
+
+
+class UsernameUpdate(BaseModel):
+    new_username: str = Field(min_length=3, max_length=64)
+    #: Required even though the caller is already authenticated.
+    current_password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordUpdate(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+# --------------------------------------------------------------------------- #
 # Settings
 # --------------------------------------------------------------------------- #
 class SecretStatus(BaseModel):
@@ -69,6 +91,8 @@ class SettingsOut(BaseModel):
     progress_speech_enabled: bool = True
     pi_version: str | None = None
     pi_rpc_available: bool = False
+    #: ``dark``, ``light`` or ``system``.
+    theme: str = "dark"
 
 
 class SettingsUpdate(BaseModel):
@@ -89,6 +113,7 @@ class SettingsUpdate(BaseModel):
     checks_enabled: bool | None = None
     voice_enabled: bool | None = None
     progress_speech_enabled: bool | None = None
+    theme: str | None = None
 
 
 class ConnectionTestResult(BaseModel):

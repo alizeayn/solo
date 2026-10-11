@@ -50,6 +50,9 @@ separated by responsibility, not by deployment.
 | `services/orchestrator_brain.py` | The Orchestrator's reasoning: intent, planning, prioritisation, summaries, Q&A. |
 | `services/orchestration_state.py` | Durable per-project working memory: queue, priorities, dependencies, notes. |
 | `services/checks.py` | Pyright integration — the verification half of the harness. |
+| `services/narration.py` | **Voice-native output.** Decides what is worth saying, orders it, coalesces stale lines, rate limits, and yields on barge-in. Phase 4 attaches an audio transport to it. |
+| `services/account_service.py` | Username and password changes, with current-password confirmation and session revocation. |
+| `services/pi_runtime.py` | Solo's own isolated Pi Agent: locate, install, verify, never `PATH`. |
 | `api/pi.py`, `api/orchestrator.py`, `api/orchestration.py` | Settings-UI endpoints for Pi, OpenRouter and the plan. |
 | `api/` | HTTP + WebSocket routers; validation and status-code mapping. |
 | `container.py` | Builds and owns long-lived dependencies (the only place that picks concrete implementations). |
@@ -295,7 +298,21 @@ event feed, and mirrors backend state rather than owning it.
 
 ---
 
-## 11. Extension points
+## 11. Appearance
+
+Solo ships a dark and a light theme. Every colour is a CSS custom property defined
+once per theme under `:root` and `:root[data-theme="light"]`; components consume
+only those variables, so no component knows which theme is active.
+
+`hooks/useTheme.ts` resolves a preference (`dark`, `light`, `system`) to an
+effective theme and applies it as `data-theme` on `<html>`. The preference is
+cached in `localStorage` and stored in Solo's settings: the cache exists so
+`index.html` can apply the theme **before first paint** (no flash of the wrong
+appearance), and the server copy exists so the choice follows the account to
+another browser. `localStorage` is a cache of the server value, never the source
+of truth. `DockLayout` picks the matching Dockview theme explicitly.
+
+## 12. Extension points
 
 | To add… | Change |
 |---|---|

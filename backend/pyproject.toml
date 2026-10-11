@@ -1,6 +1,6 @@
 [project]
 name = "solo"
-version = "2.2.0"
+version = "2.3.0"
 description = "Solo — voice-first AI workspace (backend)"
 requires-python = ">=3.12"
 

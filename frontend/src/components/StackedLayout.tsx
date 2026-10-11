@@ -5,12 +5,14 @@ import { useState } from 'react'
 import ActivityPanel from '../panels/ActivityPanel'
 import ConversationPanel from '../panels/ConversationPanel'
 import InspectorPanel from '../panels/InspectorPanel'
+import VoiceChannel from './VoiceChannel'
 import WritePanel from '../panels/WritePanel'
 
-type TabId = 'conversation' | 'activity' | 'write' | 'inspector'
+type TabId = 'conversation' | 'voice' | 'activity' | 'write' | 'inspector'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'conversation', label: 'Conversation' },
+  { id: 'voice', label: 'Voice' },
   { id: 'activity', label: 'Activity' },
   { id: 'write', label: 'Write' },
   { id: 'inspector', label: 'Inspector' },
@@ -37,6 +39,7 @@ export default function StackedLayout() {
       </div>
       <div className="stacked__content">
         {tab === 'conversation' && <ConversationPanel />}
+        {tab === 'voice' && <VoiceChannel />}
         {tab === 'activity' && <ActivityPanel />}
         {tab === 'write' && <WritePanel />}
         {tab === 'inspector' && <InspectorPanel />}

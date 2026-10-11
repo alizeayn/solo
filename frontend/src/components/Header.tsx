@@ -6,6 +6,7 @@
 import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
 import StatusBadge, { realtimeTone } from './StatusBadge'
+import ThemeToggle from './ThemeToggle'
 
 export default function Header({
   username,
@@ -116,6 +117,7 @@ export default function Header({
       </div>
 
       <div className="header__group">
+        <ThemeToggle compact />
         <span className="mono" style={{ color: 'var(--text-faint)' }}>
           {username}
         </span>

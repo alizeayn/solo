@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,6 +47,28 @@ class AuthSessionRepository:
         await self.session.execute(
             delete(AuthSession).where(AuthSession.token_hash == token_hash)
         )
+
+    async def delete_for_user(
+        self, user_id: int, *, except_token_hash: str | None = None
+    ) -> int:
+        """Revoke every session for a user, optionally keeping one alive.
+
+        Used when a password changes: other devices must not stay signed in,
+        while the browser that made the change stays usable.
+        """
+        statement = delete(AuthSession).where(AuthSession.user_id == user_id)
+        if except_token_hash:
+            statement = statement.where(AuthSession.token_hash != except_token_hash)
+        result = await self.session.execute(statement)
+        return int(result.rowcount or 0)
+
+    async def count_for_user(self, user_id: int) -> int:
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(AuthSession)
+            .where(AuthSession.user_id == user_id)
+        )
+        return int(result.scalar_one())
 
     async def delete_expired(self) -> None:
         await self.session.execute(

@@ -159,6 +159,24 @@ workspace. You are given a bounded snapshot of the project's current state.
 
 Respond with JSON only."""
 
+MILESTONE_SYSTEM = """You describe the current stage of a coding task in ONE short sentence.
+
+You are given a stage, a title and the concrete evidence that justified it. Rules:
+- Describe only what the evidence shows. Never invent files, tests, results or
+  intentions that are not in the evidence.
+- Write for the person who asked for the task: plain language, present tense.
+- At most 20 words. No file paths unless one is the whole point. No tool names.
+- No preamble, no markdown, no trailing punctuation beyond a full stop.
+
+Respond with JSON only."""
+
+MILESTONE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"detail": {"type": "string"}},
+    "required": ["detail"],
+    "additionalProperties": False,
+}
+
 ANSWER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"answer": {"type": "string"}},
@@ -189,6 +207,23 @@ class OrchestratorBrain:
     # ------------------------------------------------------------------ #
     # Availability
     # ------------------------------------------------------------------ #
+    async def is_enabled(self) -> bool:
+        """Whether the Orchestrator is enabled, preferring the saved setting.
+
+        `Settings.orchestrator_enabled` is only the environment *default*. The
+        workspace toggle writes to the database, and it must win — otherwise the
+        switch in Settings is decorative and disabling the Orchestrator has no
+        effect on the running system.
+        """
+        if self._settings_service is not None:
+            try:
+                return await self._settings_service.get_bool(
+                    "orchestrator_enabled", self._settings.orchestrator_enabled
+                )
+            except Exception:  # noqa: BLE001 - fall back to the default
+                logger.debug("could not read orchestrator_enabled", exc_info=True)
+        return self._settings.orchestrator_enabled
+
     async def _settings_view(self) -> tuple[bool, str | None]:
         """``(has_key, model)`` from saved settings.
 
@@ -205,7 +240,7 @@ class OrchestratorBrain:
         """Current orchestrator configuration, without exposing the key."""
         has_key, model = await self._settings_view()
         return {
-            "enabled": self._settings.orchestrator_enabled,
+            "enabled": await self.is_enabled(),
             "configured": bool(has_key and (model or self._client_factory is not None)),
             "has_key": has_key,
             "model": model,
@@ -217,23 +252,30 @@ class OrchestratorBrain:
         }
 
     async def available(self) -> bool:
-        if not self._settings.orchestrator_enabled:
+        if not await self.is_enabled():
             return False
         if self._client_factory is not None:
             return True
         has_key, model = await self._settings_view()
         return bool(has_key and model)
 
-    async def client(self) -> tuple[OpenRouterClient, str] | None:
-        """The configured OpenRouter client and model, or ``None``."""
+    async def credentials(self) -> tuple[OpenRouterClient, str | None] | None:
+        """An API client whenever a key exists, **with or without a model**.
+
+        Listing models is the step that comes *before* choosing one, so it must
+        not require a model. Requiring both here was the defect that made
+        "Retrieve models" report a missing API key while the key was present and
+        validating correctly.
+        """
         if self._client_factory is not None:
-            return await self._client_factory()
-        if self._settings_service is None or not self._settings.orchestrator_enabled:
+            client, model = await self._client_factory()
+            return client, model
+        if self._settings_service is None:
             return None
         key = await self._settings_service.get_secret("openrouter_api_key")
-        model = await self._settings_service.get_plain("openrouter_model")
-        if not key or not model:
+        if not key:
             return None
+        model = await self._settings_service.get_plain("openrouter_model")
         return (
             OpenRouterClient(
                 key,
@@ -242,6 +284,22 @@ class OrchestratorBrain:
             ),
             model,
         )
+
+    async def client(self) -> tuple[OpenRouterClient, str] | None:
+        """An API client **and** a model, for work that actually calls the model.
+
+        Returns ``None`` when either is missing, or when the Orchestrator is
+        disabled — the caller falls back to deterministic behaviour.
+        """
+        if not await self.is_enabled():
+            return None
+        pair = await self.credentials()
+        if pair is None:
+            return None
+        client, model = pair
+        if not model:
+            return None
+        return client, model
 
     # ------------------------------------------------------------------ #
     # Intent classification and planning
@@ -364,6 +422,54 @@ class OrchestratorBrain:
         except (OpenRouterError, ValidationError) as exc:
             logger.warning("orchestrator summarisation failed: %s", exc)
             return None
+
+    # ------------------------------------------------------------------ #
+    # Milestone wording
+    # ------------------------------------------------------------------ #
+    async def describe_milestone(
+        self,
+        *,
+        stage: str,
+        title: str,
+        evidence: list[str],
+        instruction: str | None = None,
+    ) -> str | None:
+        """Phrase a milestone transition in one short sentence.
+
+        The stage, the status and the evidence are already decided by
+        :mod:`app.services.milestones` from real events. This method may only
+        *reword* them; it can never introduce progress that did not happen, and a
+        failure leaves the deterministic text in place.
+        """
+        pair = await self.client()
+        if pair is None:
+            return None
+        client, model = pair
+
+        payload = {
+            "stage": stage,
+            "title": title,
+            "task": _clip(instruction, 400),
+            "evidence": [_clip(item, 200) for item in evidence][:6],
+        }
+        try:
+            raw = await self._call(
+                client,
+                model,
+                system=MILESTONE_SYSTEM,
+                user="Describe this task milestone:\n" + json.dumps(payload, ensure_ascii=False),
+                schema=MILESTONE_SCHEMA,
+                schema_name="milestone",
+                max_tokens=200,
+            )
+        except (OpenRouterError, ValidationError) as exc:
+            logger.warning("milestone wording failed: %s", exc)
+            return None
+
+        detail = raw.get("detail")
+        if not isinstance(detail, str) or not detail.strip():
+            return None
+        return detail.strip()
 
     # ------------------------------------------------------------------ #
     # Project questions

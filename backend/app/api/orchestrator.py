@@ -47,17 +47,36 @@ async def _status_payload(container: Container) -> OrchestratorStatusOut:
     )
 
 
-async def _require_client(container: Container) -> tuple[OpenRouterClient, str | None]:
-    pair = await container.brain.client()
+async def _require_credentials(container: Container) -> tuple[OpenRouterClient, str | None]:
+    """A client for calls that need a key but not a chosen model.
+
+    Model *listing* is exactly that: you cannot choose a model before you can see
+    the list. The error messages are deliberately distinct, so "no key" is never
+    reported when the real problem is a missing model or a disabled Orchestrator.
+    """
+    enabled = await container.brain.is_enabled()
+    if not enabled and not await _has_key(container):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "The Orchestrator is disabled and has no API key. Enable it and add "
+                "an OpenRouter API key in Settings → Orchestrator."
+            ),
+        )
+    pair = await container.brain.credentials()
     if pair is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "The Orchestrator needs an OpenRouter API key. Add one in the "
-                "Orchestrator settings first."
+                "No OpenRouter API key is saved. Add one in Settings → Orchestrator, "
+                "then retrieve models."
             ),
         )
     return pair
+
+
+async def _has_key(container: Container) -> bool:
+    return bool(await container.settings_service.get_secret("openrouter_api_key"))
 
 
 @router.get("/status", response_model=OrchestratorStatusOut)
@@ -88,7 +107,7 @@ async def list_models(
     search: str | None = Query(default=None, description="Substring filter"),
 ) -> list[OpenRouterModelOut]:
     """Every model OpenRouter exposes for the saved key."""
-    client, _saved = await _require_client(container)
+    client, _saved = await _require_credentials(container)
     try:
         models = await client.list_models()
     except OpenRouterError as exc:

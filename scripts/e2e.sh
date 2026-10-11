@@ -226,6 +226,66 @@ DETAIL="$(curl -fsS -b "$COOKIES" "${BASE}/api/tasks/${TASK_ID}")"
 [[ "$(echo "$DETAIL" | json "['result_summary'] is not None")" == "True" ]] && pass "result summary recorded" || fail "no result summary"
 
 # --------------------------------------------------------------------------- #
+step "Orchestrator milestones are derived from the run, not from a timer"
+MILESTONES="$(curl -fsS -b "$COOKIES" "${BASE}/api/milestones/task/${TASK_ID}")"
+MCOUNT="$(echo "$MILESTONES" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')"
+[[ "$MCOUNT" -gt 0 ]] && pass "${MCOUNT} milestones recorded for the task" || fail "no milestones recorded"
+
+echo "$MILESTONES" | python3 -c '
+import json, sys
+items = json.load(sys.stdin)
+stages = [item["stage"] for item in items]
+assert stages[0] == "understanding", f"first stage was {stages[0]}"
+assert "implementing" in stages, f"no implementation milestone in {stages}"
+assert stages[-1] == "completed", f"last stage was {stages[-1]}"
+# Every milestone cites the evidence that justified it.
+assert all(item["evidence"] for item in items), "a milestone had no evidence"
+# Sequence numbers are monotonic, so the UI can order reliably.
+sequences = [item["sequence"] for item in items]
+assert sequences == sorted(sequences), f"out of order: {sequences}"
+assert len(set(sequences)) == len(sequences), "duplicate sequence numbers"
+# Statuses are documented values, and nothing stays active after completion.
+allowed = {"pending", "active", "done", "failed"}
+assert all(item["status"] in allowed for item in items), "unknown status"
+assert all(item["status"] != "active" for item in items), "a milestone stayed active"
+print("  stages:", " -> ".join(stages))
+' && pass "milestone chain is evidence-backed, ordered and closed" || fail "milestone chain malformed"
+
+# Activity and milestones are separate streams on purpose.
+echo "$EVENTS" | grep -q '"milestone"' && fail "milestones leaked into the activity stream" \
+  || pass "milestones are a separate stream from agent activity"
+
+step "The milestone snapshot is persisted for later consumers"
+STATE="$(curl -fsS -b "$COOKIES" "${BASE}/api/milestones/state")"
+echo "$STATE" | grep -q '"version"' && pass "structured snapshot exposed" || fail "snapshot unavailable"
+MSTATE="${DATA_DIR}/workspaces/e2e-demo/.solo/state/milestones.json"
+[[ -f "$MSTATE" ]] && pass "snapshot written to .solo/state/milestones.json" || fail "snapshot not persisted"
+
+step "Orchestrator distinguishes a saved key from a chosen model"
+# The key was saved earlier in this run; no model was chosen. Listing models must
+# therefore work — that is the exact bug this change fixes.
+# The key saved earlier is deliberately fake, so OpenRouter itself will reject
+# it. What matters is *which* layer rejects it: the local "do you have a key"
+# check must be passed, and the failure must come from the remote service. A 400
+# naming the missing key would be the original bug.
+MCODE="$(curl -s -o "$DATA_DIR/mlist.json" -w '%{http_code}' -b "$COOKIES" "${BASE}/api/orchestrator/models")"
+MLIST="$(cat "$DATA_DIR/mlist.json")"
+case "$MCODE" in
+  200) pass "models retrieved from the saved key: $(echo "$MLIST" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))') model(s)" ;;
+  502) pass "the local key check was passed; OpenRouter rejected the fake test key (502)" ;;
+  400) echo "$MLIST" | grep -qi 'API key' \
+         && fail "model listing still demands a key that is saved (the original bug)" \
+         || fail "unexpected 400: $MLIST" ;;
+  *)   fail "unexpected status $MCODE: $MLIST" ;;
+esac
+echo "$MLIST" | grep -q 'sk-or-v1-e2e-secret-key' && fail "the API key leaked into the response" \
+  || pass "the key is never returned"
+OSTATUS="$(curl -fsS -b "$COOKIES" "${BASE}/api/orchestrator/status")"
+[[ "$(echo "$OSTATUS" | json "['has_key']")" == "True" ]] && pass "status reports the key as present" || fail "status hides the key"
+[[ "$(echo "$OSTATUS" | json "['model']")" == "test/model" ]] && pass "the selected model is reported by the runtime" || fail "selected model not connected"
+[[ "$(echo "$OSTATUS" | json "['configured']")" == "True" ]] && pass "the Orchestrator is configured" || fail "not configured"
+
+# --------------------------------------------------------------------------- #
 step "Follow-up steering while a task is running"
 STEER_TASK="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/tasks" \
   -H 'Content-Type: application/json' \

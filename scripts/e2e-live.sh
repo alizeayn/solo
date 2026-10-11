@@ -223,6 +223,43 @@ for t in run.started file.changed tool.started assistant.message run.finished; d
 done
 echo "$EVENTS" | grep -q '"path": *"hello_world.py"' && pass "file.changed names the real path" || fail "file path not reported"
 
+step "Orchestrator milestones were derived from the real run"
+MS=$(curl -fsS -b "$C" "$B/api/milestones/task/$TASK_ID")
+MCOUNT=$(echo "$MS" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
+[[ "$MCOUNT" -gt 0 ]] && pass "$MCOUNT milestones recorded" || fail "no milestones recorded"
+# The chain must match what actually happened. A run that failed because the
+# provider refused the request legitimately ends in `blocked`; asserting
+# `completed` there would reward a green tick over the truth.
+TASK_STATUS=$(echo "$FINAL" | j "['status']")
+if echo "$MS" | python3 -c '
+import json, sys
+expected = sys.argv[1]
+items = json.load(sys.stdin)
+stages = [i["stage"] for i in items]
+assert stages[0] == "understanding", stages
+assert all(i["evidence"] for i in items), "a milestone had no evidence"
+# No stage repeats except a recovery-free failure, which is folded into one.
+assert stages.count("blocked") <= 1, f"duplicate blocked milestones: {stages}"
+if expected == "COMPLETED":
+    assert "implementing" in stages, stages
+    assert stages[-1] == "completed", stages
+else:
+    assert stages[-1] in ("blocked", "cancelled"), stages
+print("  stages:", " -> ".join(stages))
+' "$TASK_STATUS"; then
+  pass "milestone chain matches the run ($TASK_STATUS)"
+else
+  fail "milestone chain malformed for a $TASK_STATUS run"
+fi
+[[ -f "$PROJ/.solo/state/milestones.json" ]] && pass "milestones persisted to .solo/state" || fail "milestones not persisted"
+# The voice channel consumes structured milestones, never raw agent events.
+NARR=$(curl -fsS -b "$C" "$B/api/voice/history")
+if echo "$NARR" | python3 -c 'import json,sys;sys.exit(0 if any("milestone" in str(l.get("kind","")) for l in json.load(sys.stdin)) else 1)' 2>/dev/null; then
+  pass "a milestone reached the narration channel"
+else
+  echo "  (no narrated milestone in this run)"
+fi
+
 step "Project state store reflects the run"
 TREE=$(curl -fsS -b "$C" "$B/api/projects/$P_ID/tree?refresh=true")
 echo "$TREE" | grep -q "hello_world.py" && pass "state tree lists the new file" || fail "state tree missing the file"

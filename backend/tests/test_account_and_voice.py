@@ -414,12 +414,55 @@ def test_revoke_other_sessions_endpoint(client):
     assert client.get("/api/account").status_code == 200
 
 
-def test_voice_state_reports_a_real_pipeline_without_audio(client):
+def test_voice_state_is_honest_without_a_key(client):
+    """With no ElevenLabs key the transport records, and the state says so."""
     body = client.get("/api/voice/state").json()
     assert body["transport"] == "recording"
-    assert body["audio_available"] is False, "audio must not be claimed before Phase 4"
-    assert body["phase"] == "narration-foundation"
+    assert body["audio_available"] is False, "audio must not be claimed without a key"
+    assert body["configured"] is False
+    assert body["phase"] == "narration-only"
     assert "recent" in body
+    # The model defaults are reported even before a key exists, so the UI
+    # can show what would be used rather than an empty field.
+    assert body["model_id"]
+    assert body["stt_model_id"]
+
+
+def test_voice_model_discovery_needs_a_key(client):
+    """The failure names the key, not a missing model - the D-28 class of bug."""
+    response = client.get("/api/voice/models")
+    assert response.status_code == 400
+    assert "ElevenLabs API key" in response.json()["detail"]
+    assert client.get("/api/voice/voices").status_code == 400
+
+
+def test_voice_audio_is_404_when_nothing_was_synthesised(client):
+    # Honest: a line with no audio is not an empty 200.
+    assert client.get("/api/voice/audio/nope").status_code == 404
+
+
+def test_voice_settings_selection_round_trips(client):
+    """Selecting a model writes the setting the runtime reads."""
+    body = client.put(
+        "/api/voice/settings",
+        json={"model_id": "eleven_flash_v2_5", "voice_id": "voice-42"},
+    ).json()
+    assert body["model_id"] == "eleven_flash_v2_5"
+    assert body["voice_id"] == "voice-42"
+    # And it is the same value the settings endpoint reports.
+    settings = client.get("/api/settings").json()
+    assert settings["elevenlabs_model_id"] == "eleven_flash_v2_5"
+    assert settings["elevenlabs_tts_voice_id"] == "voice-42"
+
+
+def test_voice_settings_cannot_set_the_agent_id(client):
+    """The Agents Platform is not part of this integration."""
+    body = client.put(
+        "/api/voice/settings", json={"agent_id": "agent_x"}
+    )
+    # An unknown field is ignored rather than silently accepted.
+    assert body.status_code in (200, 422)
+    assert client.get("/api/settings").json()["elevenlabs_agent_id"] is None
 
 
 def test_voice_interrupt_and_resume(client):

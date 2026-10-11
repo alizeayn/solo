@@ -83,6 +83,83 @@ def _patch_http(monkeypatch, *, response=None, error=None) -> None:
     )
 
 
+class _RoutedClient:
+    """Stand-in for ``httpx.AsyncClient`` that routes by URL.
+
+    The ElevenLabs check makes three calls (account, models, voices), so a
+    single canned response is not enough. ``routes`` maps a URL fragment to
+    ``(status_code, payload)``; anything unmatched is a 404.
+    """
+
+    def __init__(self, routes=None, *, error=None) -> None:
+        self._routes = routes or {}
+        self._error = error
+        self.calls: list[str] = []
+
+    async def __aenter__(self) -> "_RoutedClient":
+        return self
+
+    async def __aexit__(self, *_exc) -> bool:
+        return False
+
+    async def request(self, method, url, **_kwargs):
+        self.calls.append(url)
+        if self._error:
+            raise self._error
+        for fragment, (code, payload) in self._routes.items():
+            if fragment in url:
+                return _StubResponse(code, payload)
+        return _StubResponse(404)
+
+    async def get(self, url, **_kwargs):
+        return await self.request("GET", url)
+
+    async def post(self, url, **_kwargs):
+        return await self.request("POST", url)
+
+    async def aclose(self) -> None:
+        """The real client is closed when the caller owns it."""
+
+    async def close(self) -> None:
+        pass
+
+
+def _patch_elevenlabs(monkeypatch, *, user=(200, {}), models=None, voices=None, error=None):
+    """Patch ``httpx.AsyncClient`` for the ElevenLabs code path."""
+    from app.services import elevenlabs as elevenlabs_module
+
+    routes = {
+        "/v1/user": user,
+        "/v1/models": models if models is not None else (200, _DEFAULT_MODELS),
+        "/v2/voices": voices if voices is not None else (200, _DEFAULT_VOICES),
+    }
+    holder = {}
+
+    def factory(**_kwargs):
+        holder["client"] = _RoutedClient(routes, error=error)
+        return holder["client"]
+
+    monkeypatch.setattr(elevenlabs_module.httpx, "AsyncClient", factory)
+    return holder
+
+
+_DEFAULT_MODELS = [
+    {
+        "model_id": "eleven_flash_v2_5",
+        "name": "Eleven Flash v2.5",
+        "can_do_text_to_speech": True,
+        "maximum_text_length_per_request": 40000,
+    },
+    {
+        "model_id": "scribe_v2",
+        "name": "Scribe v2",
+        "can_do_text_to_speech": False,
+    },
+]
+
+_DEFAULT_VOICES = {"voices": [{"voice_id": "voice-1", "name": "Rachel"}]}
+
+
 @pytest.fixture
 async def container(settings_factory):
     instance = await Container.create(settings_factory())
@@ -154,35 +231,67 @@ async def test_elevenlabs_missing_key(container):
     assert result.ok is False
 
 
-async def test_elevenlabs_valid_without_agent_id(container, monkeypatch):
+async def test_elevenlabs_valid_needs_no_agent_id(container, monkeypatch):
+    """A valid key is enough: Solo uses TTS and STT, not the Agents Platform."""
     await container.settings_service.update(
         SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
     )
-    _patch_http(monkeypatch, response=_StubResponse(200))
-    result = await container.settings_service.test_elevenlabs()
-    assert result.ok is False
-    assert "Agent ID" in result.message
-
-
-async def test_elevenlabs_valid_with_agent_id(container, monkeypatch):
-    await container.settings_service.update(
-        SettingsUpdate(
-            elevenlabs_api_key="sk_abcdef123456", elevenlabs_agent_id="agent_1"
-        )
-    )
-    _patch_http(monkeypatch, response=_StubResponse(200))
+    _patch_elevenlabs(monkeypatch)
     result = await container.settings_service.test_elevenlabs()
     assert result.ok is True
+    # The message states what was actually found, not merely that a key exists.
+    assert "speech model" in result.message
+    assert "voice" in result.message
+
+
+async def test_elevenlabs_reports_the_selected_model(container, monkeypatch):
+    await container.settings_service.update(
+        SettingsUpdate(
+            elevenlabs_api_key="sk_abcdef123456",
+            elevenlabs_model_id="eleven_multilingual_v2",
+        )
+    )
+    _patch_elevenlabs(monkeypatch)
+    result = await container.settings_service.test_elevenlabs()
+    assert result.ok is True
+    assert "eleven_multilingual_v2" in (result.detail or "")
 
 
 async def test_elevenlabs_rejects_invalid_key(container, monkeypatch):
     await container.settings_service.update(
         SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
     )
-    _patch_http(monkeypatch, response=_StubResponse(401))
+    _patch_elevenlabs(monkeypatch, user=(401, {}))
     result = await container.settings_service.test_elevenlabs()
     assert result.ok is False
     assert "rejected" in result.message
+    assert "abcdef123456" not in (result.detail or "")
+
+
+async def test_elevenlabs_account_with_no_voices_is_reported(
+    container, monkeypatch
+):
+    """An account with no voices cannot speak, and the message says so."""
+    await container.settings_service.update(
+        SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
+    )
+    _patch_elevenlabs(monkeypatch, voices=(200, {"voices": []}))
+    result = await container.settings_service.test_elevenlabs()
+    assert result.ok is False
+    assert "no voices" in result.message.lower()
+
+
+async def test_elevenlabs_network_failure_is_named(container, monkeypatch):
+    await container.settings_service.update(
+        SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
+    )
+    _patch_elevenlabs(
+        monkeypatch, error=httpx.ConnectError("no route to host")
+    )
+    result = await container.settings_service.test_elevenlabs()
+    assert result.ok is False
+    assert "Could not reach ElevenLabs" in result.message
+    assert "abcdef123456" not in (result.detail or "")
 
 
 # --------------------------------------------------------------------------- #

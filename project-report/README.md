@@ -5,10 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · **2.3 (voice foundation, theme, accounts)** ✅ |
-| **Last updated** | 2026-10-10 |
-| **Automated checks** | **478 passing** — 375 backend, 103 frontend (+39 live e2e, +53 simulator e2e) |
-| **Defects** | 27 found, 26 fixed with regression coverage, 1 environment gap |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · **2.4 (Orchestrator config, tiles, milestones)** ✅ |
+| **Last updated** | 2026-10-11 |
+| **Automated checks** | **632 passing** — 411 backend, 116 frontend, 63 simulator e2e, 42 live e2e |
+| **Defects** | 36 found, 35 fixed with regression coverage, 1 environment gap |
 
 ---
 
@@ -60,6 +60,17 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
 | 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
 
+### Phase 2.4 — Orchestrator config, workspace tiles, milestones
+
+| # | Stage | Document |
+|---|---|---|
+| 33 | Planning | [workspace-tiles-and-milestones-0033.md](01-planning/workspace-tiles-and-milestones-0033.md) |
+| 34 | Implementation | [orchestrator-config-and-tiles-0034.md](02-implementation/orchestrator-config-and-tiles-0034.md) |
+| 35 | Testing | [e2e-workspace-flow-0035.md](03-testing/e2e-workspace-flow-0035.md) |
+| 36 | Defects | [defect-log-0036.md](04-defects/defect-log-0036.md) |
+| 37 | Verification | [acceptance-criteria-0037.md](05-verification/acceptance-criteria-0037.md) |
+| 38 | Summary | [summary-0038.md](06-summary/summary-0038.md) |
+
 ### Phase 1.5 — Solo, project model, public readiness
 
 | # | Stage | Document |
@@ -96,6 +107,7 @@ project-report/
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
 | 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
+| 2.4 | 2026-10-11 | **Orchestrator configuration flow fixed** (key saved but no model yet no longer reports a missing key; the enable toggle now reaches the runtime); **workspace tiles** for every registered panel, including an evidence-derived **Orchestrator Milestone** tile with progressive reveal, and a voice tile prepared for ElevenLabs; the **state flow** from Pi Agent events to structured milestones, published live and persisted to `.solo/state/milestones.json`; canonical **commit policy** | 632 (411 BE · 116 FE · 63 simulator e2e · 42 live e2e) | D-28…D-36 |
 | 2.3 | 2026-10-10 | **Voice foundation**: a narration pipeline (selection, ordering, coalescing, rate limiting, barge-in) with a pluggable transport; **theme system** (dark / light / system, no flash, Dockview); **account management** (username and password from the workspace); professional README; specification reviewed and corrected | 478 (375 BE · 103 FE) + 39 live e2e + 53 simulator e2e | D-24…D-27 |
 
 ---

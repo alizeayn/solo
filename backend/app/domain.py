@@ -155,6 +155,8 @@ PLAIN_SETTING_KEYS: frozenset[str] = frozenset(
         "openrouter_model",
         "elevenlabs_agent_id",
         "elevenlabs_tts_voice_id",
+        "elevenlabs_model_id",
+        "elevenlabs_stt_model_id",
         "pi_provider",
         "pi_model",
         "pi_base_url",

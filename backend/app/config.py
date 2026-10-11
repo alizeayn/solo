@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     orchestrator_timeout_seconds: float = 45.0
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
+    # --- Voice (ElevenLabs) ---
+    # Text to speech for narration and speech to text for input. The
+    # Agents Platform is deliberately not used: it would own the
+    # conversation loop and answer from its own context instead of from
+    # the real task state.
+    elevenlabs_base_url: str = "https://api.elevenlabs.io"
+    elevenlabs_timeout_seconds: float = 30.0
+
     # --- Static checks (Pyright) ---
     checks_enabled: bool = True
     pyright_executable: str = "pyright"

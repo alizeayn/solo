@@ -79,6 +79,12 @@ class SettingsOut(BaseModel):
     openrouter_model: str | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_tts_voice_id: str | None = None
+    #: Text-to-speech model id (e.g. ``eleven_flash_v2_5``).
+    elevenlabs_model_id: str | None = None
+    #: Speech-to-text model id (e.g. ``scribe_v2``).
+    elevenlabs_stt_model_id: str | None = None
+    #: Read-only: the name of the selected voice, for display.
+    elevenlabs_voice_name: str | None = None
     pi_provider: str | None = None
     pi_model: str | None = None
     pi_base_url: str | None = None
@@ -103,6 +109,8 @@ class SettingsUpdate(BaseModel):
     openrouter_model: str | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_tts_voice_id: str | None = None
+    elevenlabs_model_id: str | None = None
+    elevenlabs_stt_model_id: str | None = None
     pi_provider: str | None = None
     pi_model: str | None = None
     pi_base_url: str | None = None

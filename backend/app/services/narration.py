@@ -291,6 +291,11 @@ class NarrationService:
     # ------------------------------------------------------------------ #
     # Introspection
     # ------------------------------------------------------------------ #
+    @property
+    def transport(self) -> NarrationTransport:
+        """The active transport, so the API can ask it for audio by line id."""
+        return self._transport
+
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
         entries = [*self._history, *self._queue][-limit:]
         return [
@@ -302,7 +307,13 @@ class NarrationService:
         return {
             "enabled": True,
             "transport": getattr(self._transport, "name", "unknown"),
-            "audio_available": getattr(self._transport, "name", "") != "recording",
+            # A transport knows best: the ElevenLabs one reports whether it is
+            # actually configured, not merely present.
+            "audio_available": bool(
+                getattr(self._transport, "audio_available", None)
+                if getattr(self._transport, "audio_available", None) is not None
+                else getattr(self._transport, "name", "") != "recording"
+            ),
             "listening": self.listening,
             "queued": len(self._queue),
             "dropped": self.dropped,

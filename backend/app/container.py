@@ -21,6 +21,7 @@ from .security import SecretCipher
 from .services.account_service import AccountService
 from .services.auth_service import AuthService
 from .services.checks import ChecksService
+from .services.elevenlabs import ElevenLabsTransport
 from .services.event_bus import EventBus
 from .services.milestones import MilestoneService
 from .services.narration import NarrationService
@@ -82,10 +83,18 @@ class Container:
         brain = OrchestratorBrain(
             settings=settings, settings_service=settings_service
         )
-        # Voice-native output. The default transport records rather than speaks,
-        # so the whole narration pipeline (ordering, coalescing, rate limiting,
-        # barge-in) is exercised today; Phase 4 attaches audio to it.
-        narration = NarrationService(bus=bus)
+        # Voice-native output. The transport is ElevenLabs when a key and a
+        # voice are configured, and the recording transport otherwise, so the
+        # pipeline (ordering, coalescing, rate limiting, barge-in) behaves
+        # identically either way and the UI can say which mode is live.
+        narration = NarrationService(
+            bus=bus,
+            transport=ElevenLabsTransport(
+                settings_service.voice_config,
+                base_url=settings.elevenlabs_base_url,
+                timeout=settings.elevenlabs_timeout_seconds,
+            ),
+        )
     # Milestones are the Orchestrator's structured reading of a task. The voice
     # channel consumes them directly, so it never reads raw agent activity.
         milestones = MilestoneService(bus=bus, brain=brain, narration=narration)

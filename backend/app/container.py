@@ -22,6 +22,7 @@ from .services.account_service import AccountService
 from .services.auth_service import AuthService
 from .services.checks import ChecksService
 from .services.event_bus import EventBus
+from .services.milestones import MilestoneService
 from .services.narration import NarrationService
 from .services.orchestrator import OrchestratorService
 from .services.orchestrator_brain import OrchestratorBrain
@@ -52,6 +53,7 @@ class Container:
     checks: ChecksService
     brain: OrchestratorBrain
     narration: NarrationService
+    milestones: MilestoneService
     orchestrator: OrchestratorService
     backend_name: str
     #: Result of the schema migration performed at startup.
@@ -84,6 +86,9 @@ class Container:
         # so the whole narration pipeline (ordering, coalescing, rate limiting,
         # barge-in) is exercised today; Phase 4 attaches audio to it.
         narration = NarrationService(bus=bus)
+    # Milestones are the Orchestrator's structured reading of a task. The voice
+    # channel consumes them directly, so it never reads raw agent activity.
+        milestones = MilestoneService(bus=bus, brain=brain, narration=narration)
 
         # The adapter needs the launch configuration, which lives in settings.
         backend_name = resolve_backend(settings)
@@ -111,6 +116,7 @@ class Container:
             checks=checks,
             brain=brain,
             narration=narration,
+            milestones=milestones,
             orchestrator=OrchestratorService(
                 session_factory=session_factory,
                 bus=bus,
@@ -119,6 +125,7 @@ class Container:
                 store=store,
                 brain=brain,
             narration=narration,
+            milestones=milestones,
                 checks=checks,
             ),
             backend_name=backend_name,

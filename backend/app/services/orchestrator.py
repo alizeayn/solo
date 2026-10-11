@@ -42,6 +42,7 @@ from .checks import ChecksService
 from .context import build_snapshot, offline_answer
 from .event_bus import EventBus
 from .intent import IntentRouter
+from .milestones import MilestoneService
 from .narration import NarrationService, Priority
 from .orchestration_state import OrchestrationState, PlannedTask
 from .orchestrator_brain import IntentDecision, OrchestratorBrain
@@ -74,6 +75,7 @@ class OrchestratorService:
         brain: OrchestratorBrain | None = None,
         checks: ChecksService | None = None,
         narration: NarrationService | None = None,
+        milestones: MilestoneService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._bus = bus
@@ -84,6 +86,7 @@ class OrchestratorService:
         self._brain = brain
         self._checks = checks
         self._narration = narration
+        self._milestones = milestones
         self._runners: dict[str, asyncio.Task[None]] = {}
         #: Post-settle work (summary, checks, queue advance) kept off the
         #: notification path but tracked so shutdown can await it.
@@ -565,6 +568,18 @@ class OrchestratorService:
                 state = await self._load_state(project)
                 state.add_many(planned)
                 await self._save_state(project, state)
+                # Evidence for the planning milestone: a real plan exists.
+                await self._emit(
+                    task_id=None,
+                    project_id=project_id,
+                    type=EventType.PROGRESS_SUMMARY.value,
+                    message=f"Planned {len(planned)} step(s) for this request",
+                    data={
+                        "source": "orchestrator",
+                        "steps": len(planned),
+                        "reason": decision.reason,
+                    },
+                )
 
         first = state.next_pending() if state is not None else None
         instruction = first.instruction if first is not None else content
@@ -966,6 +981,61 @@ class OrchestratorService:
         await self._narrate(
             type, message, task_id=task_id, project_id=project_id, data=data
         )
+        await self._observe_milestone(
+            task_id=task_id,
+            project_id=project_id,
+            event_type=type,
+            message=message,
+            data=data,
+        )
+
+    async def _observe_milestone(
+        self,
+        *,
+        task_id: str | None,
+        project_id: str | None,
+        event_type: str,
+        message: str,
+        data: dict | None = None,
+    ) -> None:
+        """Feed one event to the milestone tracker and persist any change.
+
+        The tracker decides whether the event justifies a phase transition; most
+        events do not, which is the point — a milestone means something changed.
+        """
+        if self._milestones is None or task_id is None:
+            return
+        instruction: str | None = None
+        async with self._session_factory() as session:
+            task = await TaskRepository(session).get(task_id)
+        if task is not None:
+            instruction = task.instruction
+        changed = await self._milestones.observe(
+            task_id=task_id,
+            project_id=project_id,
+            event_type=event_type,
+            message=message,
+            data=data,
+            instruction=instruction,
+        )
+        if changed is not None:
+            await self._persist_milestones(project_id)
+
+    async def _persist_milestones(self, project_id: str | None) -> None:
+        """Write the milestone snapshot into the project store.
+
+        Separate from the live broadcast on purpose: the broadcast serves the UI,
+        this is the durable record a later voice session can read on reconnect.
+        """
+        if self._milestones is None or self._store is None or project_id is None:
+            return
+        async with self._session_factory() as session:
+            project = await ProjectRepository(session).get(project_id)
+        if project is None:
+            return
+        await asyncio.to_thread(
+            self._store.write_milestones, project, self._milestones.snapshot()
+        )
 
     async def _set_status(
         self,
@@ -977,13 +1047,43 @@ class OrchestratorService:
         result_summary: str | None = None,
         error: str | None = None,
     ) -> None:
+        # Read first, in its own session: the milestone chain is closed before
+        # the row is written, and closing it touches the store and possibly the
+        # Orchestrator model, neither of which belongs inside a database
+        # transaction.
+        async with self._session_factory() as session:
+            task = await TaskRepository(session).get(task_id)
+            if task is None:
+                return
+            # Never overwrite a terminal state. This closes the race where a
+            # shutdown cancellation arrives just after a task completed.
+            if TaskStatus(task.status) in TERMINAL_STATUSES:
+                return
+            task_result_summary = result_summary or task.result_summary
+            task_error = error or task.error
+
+        # Close the milestone chain *before* the row becomes terminal. The chain
+        # is part of the outcome: a client that observes a finished task must
+        # never then read a milestone still marked "in progress". Closing it
+        # first also means the durable snapshot is already final by the time the
+        # terminal status is visible anywhere.
+        if status in TERMINAL_STATUSES and self._milestones is not None:
+            await self._milestones.finish(
+                task_id=task_id,
+                project_id=project_id,
+                status=status.value,
+                summary=task_result_summary,
+                error=task_error,
+            )
+            await self._persist_milestones(project_id)
+
         async with self._session_factory() as session:
             repo = TaskRepository(session)
             task = await repo.get(task_id)
             if task is None:
                 return
-            # Never overwrite a terminal state. This closes the race where a
-            # shutdown cancellation arrives just after a task completed.
+            # Re-checked under the write session: a concurrent settlement may
+            # have won the race while milestones were being closed.
             if TaskStatus(task.status) in TERMINAL_STATUSES:
                 return
             await repo.update(
@@ -1016,7 +1116,9 @@ class OrchestratorService:
         if status in TERMINAL_STATUSES:
             # Summaries, static checks and queue advancement are enhancements:
             # they run after the user is told the task finished, never in front
-            # of the notification.
+            # of the notification. The milestone chain was already closed above,
+            # before the row became terminal.
+
             # Say the outcome once, whatever the outcome is. The narration
             # service drops a duplicate, so a richer summary that arrives next
             # simply supersedes it.

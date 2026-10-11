@@ -212,6 +212,10 @@ class StorePaths:
         return self.state_dir / "orchestration.json"
 
     @property
+    def milestones(self) -> Path:
+        return self.state_dir / "milestones.json"
+
+    @property
     def memory_dir(self) -> Path:
         return self.meta / "memory"
 
@@ -508,6 +512,14 @@ class ProjectStoreService:
 
     def write_orchestration(self, project: Project, payload: dict) -> bool:
         return _safe_write_json(self.paths(project).orchestration, payload)
+
+    # -- milestones ------------------------------------------------------ #
+    def read_milestones(self, project: Project) -> dict | None:
+        """The Orchestrator's structured milestone history for this project."""
+        return _read_json(self.paths(project).milestones)
+
+    def write_milestones(self, project: Project, payload: dict) -> bool:
+        return _safe_write_json(self.paths(project).milestones, payload)
 
     def read_config(self, project: Project) -> dict:
         stored = _read_json(self.paths(project).config, {}) or {}

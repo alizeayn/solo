@@ -22,6 +22,7 @@ from .api import files as files_api
 from .api import fs as fs_api
 from .api import health as health_api
 from .api import messages as messages_api
+from .api import milestones as milestones_api
 from .api import orchestration as orchestration_api
 from .api import orchestrator as orchestrator_api
 from .api import pi as pi_api
@@ -133,6 +134,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(files_api.router)
     app.include_router(tasks_api.router)
     app.include_router(messages_api.router)
+    app.include_router(milestones_api.router)
     app.include_router(pi_api.router)
     app.include_router(orchestrator_api.router)
     app.include_router(orchestration_api.router)

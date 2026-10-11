@@ -114,8 +114,10 @@ Every test gets an isolated data directory and its own application instance
 
 **Commits**
 
-Conventional-commit style subject lines (`feat:`, `fix:`, `test:`, `docs:`),
-imperative mood, one logical change per commit.
+The canonical policy is **[commit-policy.md](commit-policy.md)** — split by intent
+rather than by stage or file, Conventional Commit prefixes, review the staged diff,
+run the relevant tests, and never rewrite shared history. It is not restated here
+so the two cannot drift apart.
 
 ---
 

@@ -485,7 +485,11 @@ cd frontend && npm test && npm run typecheck
 Please keep the module boundaries intact: business logic in `services/`, database
 access in `repositories/`, provider specifics in `adapters/`, and no new
 dependency on a global tool. [docs/development.md](docs/development.md) documents
-the conventions and the four historical traps worth not repeating.
+the conventions and the historical traps worth not repeating.
+
+Commits follow [docs/commit-policy.md](docs/commit-policy.md): one commit per
+*intent*, not per stage or per file, each one leaving the repository able to build
+and start.
 
 ## Documentation
 

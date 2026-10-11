@@ -472,6 +472,16 @@ Never allow the router/summarizer model to silently rewrite user instructions or
 
 ---
 
+## 9.5 Commit Policy
+
+Development in this repository follows the commit policy in
+[`docs/commit-policy.md`](docs/commit-policy.md). In summary: optimise commits for
+clarity, reviewability, traceability and safe rollback rather than file count; a
+development stage is a unit of work, not necessarily a single commit. The policy
+document is the single source of truth and is not duplicated here.
+
+---
+
 ## 10. Security and Deployment
 
 ### 10.1 Authentication is mandatory

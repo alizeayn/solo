@@ -286,6 +286,50 @@ OSTATUS="$(curl -fsS -b "$COOKIES" "${BASE}/api/orchestrator/status")"
 [[ "$(echo "$OSTATUS" | json "['configured']")" == "True" ]] && pass "the Orchestrator is configured" || fail "not configured"
 
 # --------------------------------------------------------------------------- #
+step "Voice endpoints are honest without an ElevenLabs key"
+VSTATE="$(curl -fsS -b "$COOKIES" "${BASE}/api/voice/state")"
+[[ "$(echo "$VSTATE" | json "['configured']")" == "False" ]] \
+  && pass "state reports no ElevenLabs key" || fail "state claims a key that is not saved"
+[[ "$(echo "$VSTATE" | json "['audio_available']")" == "False" ]] \
+  && pass "audio is not claimed without a key" || fail "audio claimed without a key"
+[[ "$(echo "$VSTATE" | json "['phase']")" == "narration-only" ]] \
+  && pass "phase is narration-only" || fail "unexpected phase: $(echo "$VSTATE" | json "['phase']")"
+[[ "$(echo "$VSTATE" | json "['transport']")" == "recording" ]] \
+  && pass "the recording transport is active" || fail "unexpected transport"
+# The defaults are reported so the UI can show what would be used.
+[[ -n "$(echo "$VSTATE" | json "['model_id']")" ]] \
+  && pass "a default speech model is reported" || fail "no default model reported"
+[[ -n "$(echo "$VSTATE" | json "['stt_model_id']")" ]] \
+  && pass "a default recognition model is reported" || fail "no default stt model"
+
+# Discovery must name the key, not a missing model. This is the D-28 class of bug.
+MCODE="$(curl -s -o "${DATA_DIR}/vmodels.json" -w '%{http_code}' -b "$COOKIES" "${BASE}/api/voice/models")"
+[[ "$MCODE" == "400" ]] && pass "model discovery without a key is refused (400)" \
+  || fail "unexpected status: $MCODE"
+grep -qi 'ElevenLabs API key' "${DATA_DIR}/vmodels.json" \
+  && pass "the refusal names the ElevenLabs key" || fail "the refusal does not name the key"
+VCODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" "${BASE}/api/voice/voices")"
+[[ "$VCODE" == "400" ]] && pass "voice listing without a key is refused (400)" || fail "unexpected status: $VCODE"
+
+# Transcription must refuse an empty recording locally rather than bill for it.
+TCODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" \
+  -F "file=@/dev/null;filename=empty.webm" "${BASE}/api/voice/transcribe")"
+[[ "$TCODE" == "400" ]] && pass "an empty recording is refused (400)" || fail "unexpected status: $TCODE"
+
+# A line with no audio is a 404, not an empty 200.
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" "${BASE}/api/voice/audio/nope")" == "404" ]] \
+  && pass "audio for an unknown line is 404" || fail "expected 404 for unknown audio"
+
+# Selecting a model writes the setting the runtime reads.
+SEL="$(curl -fsS -b "$COOKIES" -X PUT "${BASE}/api/voice/settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"model_id":"eleven_flash_v2_5","voice_id":"voice-1","stt_model_id":"scribe_v2"}')"
+[[ "$(echo "$SEL" | json "['model_id']")" == "eleven_flash_v2_5" ]] \
+  && pass "speech model selection saved" || fail "model selection not saved"
+[[ "$(curl -fsS -b "$COOKIES" "${BASE}/api/settings" | json "['elevenlabs_model_id']")" == "eleven_flash_v2_5" ]] \
+  && pass "the runtime reads the selected model" || fail "selection did not reach the settings the runtime reads"
+
+# --------------------------------------------------------------------------- #
 step "Follow-up steering while a task is running"
 STEER_TASK="$(curl -fsS -b "$COOKIES" -X POST "${BASE}/api/tasks" \
   -H 'Content-Type: application/json' \

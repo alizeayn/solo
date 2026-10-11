@@ -1,9 +1,18 @@
 /**
- * Tiled workspace built with Dockview.
+ * Tiled workspace, built with Dockview.
  *
- * Layout is persisted per browser in local storage. Invalid or stale layout
- * JSON is discarded and the default three-panel layout is restored, so a bad
- * stored layout can never leave the user with an unusable screen.
+ * Two things this file has to get right:
+ *
+ * 1. **A saved layout must not hide new tiles.** The stored layout is keyed by a
+ *    version, and after restoring one the workspace checks that every registered
+ *    panel is present, adding any that are missing. Without that, a user who had
+ *    ever opened the app kept their original arrangement forever and tiles added
+ *    later never appeared — which is exactly what happened before this was fixed.
+ * 2. **A corrupt layout must never trap the user.** Invalid JSON, or JSON from an
+ *    incompatible version, is discarded and the default layout is rebuilt.
+ *
+ * Panel visibility is independent of task lifecycle: rearranging tiles cannot
+ * affect the work in progress.
  */
 
 import { useCallback, useRef } from 'react'
@@ -21,18 +30,74 @@ import { useThemeContext } from '../state/ThemeProvider'
 import ActivityPanel from '../panels/ActivityPanel'
 import ConversationPanel from '../panels/ConversationPanel'
 import InspectorPanel from '../panels/InspectorPanel'
-import VoiceChannel from './VoiceChannel'
+import MilestonePanel from '../panels/MilestonePanel'
 import WritePanel from '../panels/WritePanel'
+import VoiceChannel from './VoiceChannel'
 
-const LAYOUT_STORAGE_KEY = 'solo.layout.v1'
+/**
+ * Bump when the set of panels changes. `v1` held only Conversation, Activity and
+ * Inspector; restoring it would silently omit every later tile.
+ */
+const LAYOUT_STORAGE_KEY = 'solo.layout.v3'
 
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   conversation: ConversationPanel,
   activity: ActivityPanel,
+  milestones: MilestonePanel,
   voice: VoiceChannel,
   write: WritePanel,
   inspector: InspectorPanel,
 }
+
+interface PanelSpec {
+  id: string
+  component: string
+  title: string
+  position?: { referencePanel: string; direction: 'right' | 'below' | 'within' }
+}
+
+/**
+ * The workspace tiles, in the order they should be introduced.
+ *
+ * `milestones` is deliberately adjacent to `activity`: one shows what the agent
+ * is doing, the other what it means. They answer different questions and are
+ * meant to be read together.
+ */
+const PANEL_SPECS: PanelSpec[] = [
+  { id: 'conversation', component: 'conversation', title: 'Conversation' },
+  {
+    id: 'activity',
+    component: 'activity',
+    title: 'Pi Agent Activity',
+    position: { referencePanel: 'conversation', direction: 'right' },
+  },
+  {
+    id: 'milestones',
+    component: 'milestones',
+    title: 'Orchestrator Milestones',
+    position: { referencePanel: 'activity', direction: 'below' },
+  },
+  {
+    id: 'voice',
+    component: 'voice',
+    title: 'Voice',
+    position: { referencePanel: 'milestones', direction: 'below' },
+  },
+  {
+    id: 'write',
+    component: 'write',
+    title: 'Write',
+    position: { referencePanel: 'conversation', direction: 'below' },
+  },
+  {
+    id: 'inspector',
+    component: 'inspector',
+    title: 'Inspector',
+    position: { referencePanel: 'write', direction: 'within' },
+  },
+]
+
+const DEFAULT_PANELS = PANEL_SPECS
 
 function loadLayout(): SerializedDockview | null {
   try {
@@ -47,7 +112,7 @@ function saveLayout(api: DockviewApi) {
   try {
     window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(api.toJSON()))
   } catch {
-    /* storage may be unavailable (private mode); layout persistence is optional */
+    /* storage may be unavailable (private mode); persistence is optional */
   }
 }
 
@@ -57,38 +122,53 @@ function clearLayout() {
   } catch {
     /* ignore */
   }
+  // Drop earlier versions too, so they cannot be picked up again.
+  for (const stale of ['solo.layout.v1', 'solo.layout.v2']) {
+    try {
+      window.localStorage.removeItem(stale)
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function addDefaultLayout(api: DockviewApi) {
-  const conversation = api.addPanel({
-    id: 'conversation',
-    component: 'conversation',
-    title: 'Conversation',
-  })
-  api.addPanel({
-    id: 'activity',
-    component: 'activity',
-    title: 'Coding Agent Activity',
-    position: { referencePanel: conversation.id, direction: 'right' },
-  })
-  api.addPanel({
-    id: 'write',
-    component: 'write',
-    title: 'Write',
-    position: { referencePanel: conversation.id, direction: 'below' },
-  })
-  api.addPanel({
-    id: 'voice',
-    component: 'voice',
-    title: 'Voice',
-    position: { referencePanel: 'activity', direction: 'below' },
-  })
-  api.addPanel({
-    id: 'inspector',
-    component: 'inspector',
-    title: 'Inspector',
-    position: { referencePanel: 'voice', direction: 'within' },
-  })
+  for (const spec of DEFAULT_PANELS) {
+    api.addPanel({
+      id: spec.id,
+      component: spec.component,
+      title: spec.title,
+      position: spec.position,
+    })
+  }
+}
+
+/**
+ * Add any registered panel that a restored layout does not contain.
+ *
+ * Returns the ids that had to be added, so the caller can log or inform the user.
+ * The user's existing arrangement is untouched: new tiles are introduced without
+ * rearranging anything they have already positioned.
+ */
+function ensureAllPanels(api: DockviewApi): string[] {
+  const added: string[] = []
+  for (const spec of PANEL_SPECS) {
+    if (api.getPanel(spec.id)) continue
+    const reference = spec.position?.referencePanel
+    const anchor =
+      reference && api.getPanel(reference) ? reference : api.panels[0]?.id ?? null
+    api.addPanel({
+      id: spec.id,
+      component: spec.component,
+      title: spec.title,
+      position:
+        anchor && anchor !== spec.id
+          ? { referencePanel: anchor, direction: spec.position?.direction ?? 'within' }
+          : undefined,
+    })
+    added.push(spec.id)
+  }
+  return added
 }
 
 export default function DockLayout() {
@@ -110,7 +190,14 @@ export default function DockLayout() {
         clearLayout()
       }
     }
-    if (!restored) addDefaultLayout(api)
+
+    if (!restored) {
+      addDefaultLayout(api)
+    } else {
+      // Never let a saved layout hide a tile that this version provides.
+      ensureAllPanels(api)
+    }
+
     api.onDidLayoutChange(() => saveLayout(api))
   }, [])
 
@@ -124,3 +211,5 @@ export default function DockLayout() {
     />
   )
 }
+
+export { PANEL_SPECS, ensureAllPanels, LAYOUT_STORAGE_KEY }

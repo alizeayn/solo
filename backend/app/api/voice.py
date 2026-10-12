@@ -63,38 +63,27 @@ class VoiceSettingsIn(BaseModel):
 async def _state_payload(container: ContainerDep) -> dict[str, Any]:
     """Everything the voice channel is currently doing.
 
-    Shared by ``GET /state`` and ``PUT /settings`` so saving a selection returns
-    the same object the UI already renders, rather than a second shape.
+    Deliberately **free of network I/O**. This is polled while a task runs, so a
+    third-party call here would stall the whole workspace. The resolved
+    configuration is only needed when Solo actually speaks, which happens off the
+    critical path in the transport.
     """
     state = dict(container.narration.state())
+    status = await container.settings_service.voice_status()
+
     state["voice_enabled"] = await container.settings_service.get_bool(
         "voice_enabled", True
     )
     state["speech_enabled"] = await container.settings_service.get_bool(
         "progress_speech_enabled", True
     )
-    key = await container.settings_service.get_secret("elevenlabs_api_key")
-    # Ask for the *resolved* configuration — the same call the transport makes
-    # before it speaks. Reading a different source here is how the UI and the
-    # runtime drift apart, which is exactly the D-28 class of bug.
-    config = await container.settings_service.voice_config()
-    saved_model = await container.settings_service.get_plain("elevenlabs_model_id")
-    saved_voice = await container.settings_service.get_plain(
-        "elevenlabs_tts_voice_id"
+    state.update(status)
+    # `audio_available` describes the transport, which is authoritative about
+    # whether it is currently configured to speak.
+    state["audio_available"] = bool(
+        state.get("audio_available") or container.narration.state().get("audio_available")
     )
-
-    state["configured"] = bool(key)
-    # True only when speech output can actually work: a key *and* a voice.
-    state["audio_available"] = config is not None
-    state["model_id"] = saved_model or (
-        config.model_id if config else DEFAULT_TTS_MODEL
-    )
-    state["voice_id"] = saved_voice or (config.voice_id if config else None)
-    state["voice_name"] = await container.settings_service.voice_name()
-    state["stt_model_id"] = (
-        await container.settings_service.get_plain("elevenlabs_stt_model_id")
-    ) or DEFAULT_STT_MODEL
-    state["phase"] = "voice-active" if config else "narration-only"
+    state["phase"] = "voice-active" if state["audio_available"] else "narration-only"
     return state
 
 

@@ -143,6 +143,42 @@ class SettingsService:
             minimal_harness=self._settings.pi_minimal_harness,
         )
 
+    async def voice_status(self) -> dict[str, Any]:
+        """The voice configuration, from the store only — **never the network**.
+
+        This backs ``GET /api/voice/state``, which the UI reads while a task is
+        running. Resolving the full configuration here would call ElevenLabs to
+        discover a voice, putting a third-party HTTP request (with a 30s timeout)
+        on a frequently-polled endpoint. That is how a healthy backend still
+        makes the whole workspace look dead: the browser's connection pool fills
+        with hung requests and every other panel stops updating.
+
+        Anything needing the network belongs behind an explicit action —
+        saving settings, testing the connection, or retrieving models.
+        """
+        key = await self.get_secret("elevenlabs_api_key")
+        model_id = await self.get_plain("elevenlabs_model_id") or DEFAULT_TTS_MODEL
+        stt_model_id = await self.get_plain("elevenlabs_stt_model_id") or DEFAULT_STT_MODEL
+        voice_id = await self.get_plain("elevenlabs_tts_voice_id")
+
+        # A name is only ever reported from what has already been fetched.
+        cached = self._voice_names
+        voice_name = (
+            cached[1].get(voice_id) if cached and voice_id else None
+        )
+
+        return {
+            "configured": bool(key),
+            "audio_available": bool(key and voice_id),
+            # Distinct from "no key": a scoped key cannot list voices, so a voice
+            # has to be chosen by hand.
+            "needs_voice": bool(key and not voice_id),
+            "model_id": model_id,
+            "stt_model_id": stt_model_id,
+            "voice_id": voice_id,
+            "voice_name": voice_name,
+        }
+
     async def voice_config(self) -> ElevenLabsConfig | None:
         """Resolved voice configuration, or ``None`` when not configured.
 
@@ -186,7 +222,11 @@ class SettingsService:
         try:
             voices = await self.elevenlabs_client(key).list_voices(limit=1)
         except Exception:  # noqa: BLE001 - never break a task over a voice
+            # Cache the failure too. A key scoped without `voices_read` fails
+            # every time, and retrying on every state poll would hammer the API
+            # to learn the same thing.
             logger.debug("could not list voices", exc_info=True)
+            self._voice_cache = (now, None)
             return None
         voice_id = voices[0].id if voices else None
         self._voice_cache = (now, voice_id)
@@ -309,48 +349,66 @@ class SettingsService:
                 message="No ElevenLabs API key is configured.",
                 detail="Add a key in Settings, then test again.",
             )
-        # One client — the same one the transport uses. Opening a second HTTP
-        # path here is how a check can pass while the runtime fails.
+        # Validate against an endpoint the integration actually needs, not
+        # /v1/user. A key can be entirely valid for speech while being scoped
+        # without `user_read`, and calling that "rejected" would be a lie that
+        # sends the user off to regenerate a working key.
         client = self.elevenlabs_client(key)
         try:
-            await client.verify_key()
-        except ElevenLabsError as exc:
-            return ConnectionTestResult(
-                ok=False, message=str(exc), detail=exc.detail
-            )
-
-        # The key is accepted. Now prove the parts the integration actually
-        # needs are reachable: the model catalog and the voice list. The Agents
-        # Platform is deliberately not used, so no Agent ID is required.
-        try:
             models = await client.list_models()
-            voices = await client.list_voices(limit=5)
         except ElevenLabsError as exc:
             return ConnectionTestResult(
                 ok=False,
-                message="ElevenLabs key is valid, but the voice API could not be read.",
-                detail=exc.detail or str(exc),
+                state=exc.code or "failed",
+                message=str(exc),
+                detail=exc.detail,
             )
+
         tts = [model for model in models if model.can_tts]
         model_id = await self.get_plain("elevenlabs_model_id") or DEFAULT_TTS_MODEL
-        voice_id = await self.get_plain("elevenlabs_tts_voice_id")
-        if not voice_id and voices:
-            voice_id = voices[0].id
+        saved_voice = await self.get_plain("elevenlabs_tts_voice_id")
+
+        # Voice discovery needs `voices_read`, which not every key has. Not being
+        # able to *list* voices is not the same as not being able to speak: a
+        # voice id can be set directly, and on a free plan library voices are
+        # refused anyway.
+        voices: list = []
+        voice_note = ""
+        try:
+            voices = await client.list_voices(limit=5)
+        except ElevenLabsError as exc:
+            voice_note = (
+                "This key cannot list voices (needs the voices_read permission), "
+                "so set a voice id directly."
+                if exc.code == "missing_permissions"
+                else f"Voices could not be listed: {exc}"
+            )
+
+        voice_id = saved_voice or (voices[0].id if voices else None)
         if not voice_id:
             return ConnectionTestResult(
                 ok=False,
+                state="needs_voice",
                 message=(
-                    "ElevenLabs key is valid, but the account has no voices. "
-                    "Add a voice in the ElevenLabs dashboard."
+                    "The ElevenLabs key works and models are readable, but no "
+                    "voice is selected and voices cannot be listed."
                 ),
+                detail=voice_note or "Choose a voice in the ElevenLabs dashboard.",
+                model=model_id,
             )
+
+        detail = f"Selected model: {model_id}"
+        if voice_note:
+            detail = f"{detail}. {voice_note}"
         return ConnectionTestResult(
             ok=True,
+            state="configured",
             message=(
-                f"ElevenLabs key is valid — {len(tts)} speech model(s), "
-                f"{len(voices)} voice(s) available."
+                f"ElevenLabs key is valid — {len(tts)} speech model(s) available "
+                f"to this account."
             ),
-            detail=f"Selected model: {model_id}",
+            detail=detail,
+            model=model_id,
         )
 
     async def test_pi(self) -> ConnectionTestResult:

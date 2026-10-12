@@ -5,10 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ |
-| **Last updated** | 2026-10-11 |
-| **Automated checks** | **664 passing** — 456 backend, 132 frontend, 76 simulator e2e |
-| **Defects** | 41 found, 40 fixed with regression coverage, 1 environment gap |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ · **2.6 (live voice, session)** ✅ |
+| **Last updated** | 2026-10-12 |
+| **Automated checks** | **665 passing** — 458 backend, 131 frontend, + 23 live voice, + 76 simulator e2e |
+| **Defects** | 46 found, 45 fixed with regression coverage, 1 environment gap |
 
 ---
 
@@ -59,6 +59,17 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 30 | Defects | [defect-log-0030.md](04-defects/defect-log-0030.md) |
 | 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
 | 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
+
+### Phase 2.6 — Live verification, regression fix, voice session
+
+| # | Stage | Document |
+|---|---|---|
+| 45 | Planning | [live-verification-and-voice-session-0045.md](01-planning/live-verification-and-voice-session-0045.md) |
+| 46 | Implementation | [live-voice-and-session-0046.md](02-implementation/live-voice-and-session-0046.md) |
+| 47 | Testing | [live-voice-and-workspace-0047.md](03-testing/live-voice-and-workspace-0047.md) |
+| 48 | Defects | [defect-log-0048.md](04-defects/defect-log-0048.md) |
+| 49 | Verification | [acceptance-criteria-0049.md](05-verification/acceptance-criteria-0049.md) |
+| 50 | Summary | [summary-0050.md](06-summary/summary-0050.md) |
 
 ### Phase 2.5 — Voice activation
 
@@ -118,7 +129,8 @@ project-report/
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
 | 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
-| 2.5 | 2026-10-11 | **Voice activated**: speech input feeds the existing dispatch path (browser → Scribe → `/api/projects/{id}/messages`), and speech output speaks milestones through ElevenLabs TTS at the transport seam `NarrationService` already defined — so the Orchestrator, Pi Agent and milestone pipeline are unchanged. Live model and voice discovery from the account (no hardcoded catalog), a real Voice settings pane, barge-in, and a player. The Agents Platform is deliberately not used. Verified API notes in `elevenlabs-docs/`. | 664 (456 BE · 132 FE · 76 e2e) | D-37…D-41 |
+| 2.6 | 2026-10-12 | **Live ElevenLabs verification with a real (scoped) key**: models read, speech synthesised, audio served by Solo, transcription round-tripped. Fixed a **workspace regression** — `/api/voice/state` made a blocking third-party call and the Voice panel polled it on every narration line, starving every other tile — and made one tile unable to break the rest. Voice interaction redesigned as a **continuous session** (one click to start, one to end, no holding), with barge-in by voice. ElevenLabs docs renamed to `ElevenLabs Docs/` and one earlier model claim corrected against the live API. | 458 BE · 131 FE · 23 live · 76 e2e | D-42…D-46 |
+| 2.5 | 2026-10-11 | **Voice activated**: speech input feeds the existing dispatch path (browser → Scribe → `/api/projects/{id}/messages`), and speech output speaks milestones through ElevenLabs TTS at the transport seam `NarrationService` already defined — so the Orchestrator, Pi Agent and milestone pipeline are unchanged. Live model and voice discovery from the account (no hardcoded catalog), a real Voice settings pane, barge-in, and a player. The Agents Platform is deliberately not used. Verified API notes in `ElevenLabs Docs/`. | 664 (456 BE · 132 FE · 76 e2e) | D-37…D-41 |
 | 2.4 | 2026-10-11 | **Orchestrator configuration flow fixed** (key saved but no model yet no longer reports a missing key; the enable toggle now reaches the runtime); **workspace tiles** for every registered panel, including an evidence-derived **Orchestrator Milestone** tile with progressive reveal, and a voice tile prepared for ElevenLabs; the **state flow** from Pi Agent events to structured milestones, published live and persisted to `.solo/state/milestones.json`; canonical **commit policy** | 632 (411 BE · 116 FE · 63 simulator e2e · 42 live e2e) | D-28…D-36 |
 | 2.3 | 2026-10-10 | **Voice foundation**: a narration pipeline (selection, ordering, coalescing, rate limiting, barge-in) with a pluggable transport; **theme system** (dark / light / system, no flash, Dockview); **account management** (username and password from the workspace); professional README; specification reviewed and corrected | 478 (375 BE · 103 FE) + 39 live e2e + 53 simulator e2e | D-24…D-27 |
 

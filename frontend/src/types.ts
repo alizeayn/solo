@@ -584,6 +584,8 @@ export interface VoiceState {
   voice_id?: string | null
   voice_name?: string | null
   stt_model_id?: string
+  /** A key is saved but no voice is selected, so speech output cannot run yet. */
+  needs_voice?: boolean
 }
 
 export type ConnectionState = 'connecting' | 'open' | 'closed'

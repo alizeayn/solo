@@ -241,7 +241,7 @@ async def test_elevenlabs_valid_needs_no_agent_id(container, monkeypatch):
     assert result.ok is True
     # The message states what was actually found, not merely that a key exists.
     assert "speech model" in result.message
-    assert "voice" in result.message
+    assert "eleven_flash_v2_5" in (result.detail or "")
 
 
 async def test_elevenlabs_reports_the_selected_model(container, monkeypatch):
@@ -258,27 +258,102 @@ async def test_elevenlabs_reports_the_selected_model(container, monkeypatch):
 
 
 async def test_elevenlabs_rejects_invalid_key(container, monkeypatch):
+    # Validation reads the model catalog, so that is where a rejection shows.
     await container.settings_service.update(
         SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
     )
-    _patch_elevenlabs(monkeypatch, user=(401, {}))
+    _patch_elevenlabs(
+        monkeypatch,
+        models=(
+            401,
+            {
+                "detail": {
+                    "code": "unauthorized",
+                    "message": "Invalid API key",
+                    "status": "invalid_api_key",
+                }
+            },
+        ),
+    )
     result = await container.settings_service.test_elevenlabs()
     assert result.ok is False
-    assert "rejected" in result.message
+    assert "abcdef123456" not in (result.message or "")
     assert "abcdef123456" not in (result.detail or "")
 
 
-async def test_elevenlabs_account_with_no_voices_is_reported(
+async def test_a_scoped_key_is_not_reported_as_rejected(container, monkeypatch):
+    """The live-API case: valid for speech, but without `user_read`.
+
+    Reporting this as "rejected" would send the user to regenerate a key that
+    works. It must be reported as a permission problem, and validation must still
+    succeed because models are readable.
+    """
+    await container.settings_service.update(
+        SettingsUpdate(
+            elevenlabs_api_key="sk_scoped", elevenlabs_tts_voice_id="voice-1"
+        )
+    )
+    _patch_elevenlabs(
+        monkeypatch,
+        voices=(
+            401,
+            {
+                "detail": {
+                    "type": "authentication_error",
+                    "code": "unauthorized",
+                    "message": (
+                        "The API key you used is missing the permission "
+                        "voices_read to execute this operation."
+                    ),
+                    "status": "missing_permissions",
+                }
+            },
+        ),
+    )
+    result = await container.settings_service.test_elevenlabs()
+    assert result.ok is True, "a speech-capable key must not fail validation"
+    # The permission problem is explained, and the integration still works.
+    assert "voices_read" in (result.detail or "")
+    assert result.state == "configured"
+    # The API's own message survives, instead of a generic "rejected".
+    assert "rejected" not in result.message.lower()
+
+
+async def test_a_paid_plan_error_keeps_its_explanation(container, monkeypatch):
+    """A 402 must say *why*, not become a generic HTTP error."""
+    await container.settings_service.update(
+        SettingsUpdate(elevenlabs_api_key="sk_free_plan")
+    )
+    _patch_elevenlabs(
+        monkeypatch,
+        models=(
+            402,
+            {
+                "detail": {
+                    "code": "paid_plan_required",
+                    "message": "Free users cannot use library voices via the API.",
+                    "status": "payment_required",
+                }
+            },
+        ),
+    )
+    result = await container.settings_service.test_elevenlabs()
+    assert result.ok is False
+    assert "paid plan" in result.message.lower() or "library voices" in result.message.lower()
+
+
+async def test_elevenlabs_without_a_usable_voice_asks_for_one(
     container, monkeypatch
 ):
-    """An account with no voices cannot speak, and the message says so."""
+    """No voice and no way to list one is a distinct, actionable state."""
     await container.settings_service.update(
         SettingsUpdate(elevenlabs_api_key="sk_abcdef123456")
     )
     _patch_elevenlabs(monkeypatch, voices=(200, {"voices": []}))
     result = await container.settings_service.test_elevenlabs()
     assert result.ok is False
-    assert "no voices" in result.message.lower()
+    assert result.state == "needs_voice"
+    assert "voice" in result.detail.lower()
 
 
 async def test_elevenlabs_network_failure_is_named(container, monkeypatch):

@@ -14,7 +14,7 @@ Solo uses exactly two ElevenLabs capabilities, and deliberately not a third:
   let it answer from its own context instead of from real task state.
 
 Verified against the official documentation on 2026-10-11; see
-`elevenlabs-docs/` at the repository root for the notes and sources.
+`ElevenLabs Docs/` at the repository root for the notes and sources.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 #: Production endpoint. Regional residency hosts are documented in
-#: ``elevenlabs-docs/01-authentication.md`` and can be set per deployment.
+#: ``ElevenLabs Docs/01-authentication.md`` and can be set per deployment.
 DEFAULT_BASE_URL = "https://api.elevenlabs.io"
 
 #: Fast, cheap synthesis for spoken progress. A milestone that arrives seconds
@@ -52,9 +52,11 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n{2,}")
 class ElevenLabsError(RuntimeError):
     """A call to ElevenLabs failed.
 
-    ``status`` is the HTTP status when there was a response; ``detail`` is the
-    service's own message when it returned one. Neither ever contains the API
-    key.
+    ``status`` is the HTTP status; ``code`` is the service's own machine-readable
+    code (``missing_permissions``, ``paid_plan_required``, …) when it sent one,
+    so a caller can distinguish "the key is wrong" from "the key is fine but not
+    allowed to do this". ``detail`` is the human message. None of them ever
+    contains the API key.
     """
 
     def __init__(
@@ -63,10 +65,12 @@ class ElevenLabsError(RuntimeError):
         *,
         status: int | None = None,
         detail: str | None = None,
+        code: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.code = code
 
 
 @dataclass
@@ -225,40 +229,76 @@ class ElevenLabsClient:
 
     @staticmethod
     def _error(response: httpx.Response) -> ElevenLabsError:
-        """Turn a failed response into an error that names the real cause."""
+        """Turn a failed response into an error that names the real cause.
+
+        ElevenLabs reports failures as ``{"detail": {...}}`` with a ``code``, a
+        ``message`` and a finer-grained ``status``. The nested dict is the common
+        case in practice, so it is handled first — reading only a string or a
+        list, as this did, discards the real message and misreports every error.
+        """
         detail: str | None = None
+        code: str | None = None
         try:
             body = response.json()
-            if isinstance(body, dict):
-                raw = body.get("detail")
-                if isinstance(raw, str):
-                    detail = raw
-                elif isinstance(raw, list) and raw:
-                    first = raw[0]
-                    if isinstance(first, dict):
-                        detail = str(first.get("msg") or "") or None
         except ValueError:
-            detail = None
+            body = None
 
-        if response.status_code in (401, 403):
-            message = "ElevenLabs rejected the API key."
-        elif response.status_code == 422:
+        if isinstance(body, dict):
+            raw = body.get("detail")
+            if isinstance(raw, dict):
+                # {"detail": {"code": ..., "message": ..., "status": ...}}
+                message = raw.get("message")
+                detail = str(message) if message else None
+                code = str(raw.get("status") or raw.get("code") or "") or None
+            elif isinstance(raw, str):
+                detail = raw
+            elif isinstance(raw, list) and raw:
+                first = raw[0]
+                if isinstance(first, dict):
+                    detail = str(first.get("msg") or "") or None
+        elif isinstance(body, list) and body and isinstance(body[0], dict):
+            detail = str(body[0].get("msg") or "") or None
+
+        status = response.status_code
+        if code == "missing_permissions" or (
+            detail and "missing the permission" in detail
+        ):
+            # The key is *not* wrong. Saying "rejected" here would send the user
+            # to regenerate a key that works.
+            permission = ""
+            if detail and "permission " in detail:
+                permission = detail.split("permission ", 1)[1].split(" ", 1)[0].strip()
+            message = (
+                f"The ElevenLabs key is valid but is not permitted to "
+                f"'{permission or 'perform this operation'}'."
+            )
+        elif status == 402 or code == "paid_plan_required":
+            message = detail or "This ElevenLabs feature requires a paid plan."
+        elif status in (401, 403):
+            message = detail or "ElevenLabs rejected the API key."
+        elif status == 422:
             message = "ElevenLabs rejected the request as invalid."
-        elif response.status_code == 429:
+        elif status == 429:
             message = "ElevenLabs rate limit reached."
-        elif response.status_code >= 500:
-            message = f"ElevenLabs returned HTTP {response.status_code}."
+        elif status >= 500:
+            message = f"ElevenLabs returned HTTP {status}."
         else:
-            message = f"ElevenLabs returned HTTP {response.status_code}."
+            message = detail or f"ElevenLabs returned HTTP {status}."
+
         return ElevenLabsError(
-            message, status=response.status_code, detail=detail
+            message, status=status, detail=detail, code=code
         )
 
     # ------------------------------------------------------------------ #
     # Account
     # ------------------------------------------------------------------ #
     async def verify_key(self) -> dict[str, Any]:
-        """Prove the key is accepted by the service, not merely well-formed."""
+        """The account behind the key.
+
+        Requires the ``user_read`` permission. Not all keys have it, which is
+        why validation uses :meth:`list_models` instead: a key scoped for speech
+        only is perfectly valid.
+        """
         response = await self._request("GET", "/v1/user")
         if response.status_code != 200:
             raise self._error(response)

@@ -30,6 +30,7 @@ import { useThemeContext } from '../state/ThemeProvider'
 import ActivityPanel from '../panels/ActivityPanel'
 import ConversationPanel from '../panels/ConversationPanel'
 import InspectorPanel from '../panels/InspectorPanel'
+import PanelErrorBoundary from './PanelErrorBoundary'
 import MilestonePanel from '../panels/MilestonePanel'
 import WritePanel from '../panels/WritePanel'
 import VoiceChannel from './VoiceChannel'
@@ -40,13 +41,37 @@ import VoiceChannel from './VoiceChannel'
  */
 const LAYOUT_STORAGE_KEY = 'solo.layout.v3'
 
+/**
+ * Wrap every tile in an error boundary.
+ *
+ * Dockview renders all panels into one React tree, so an error thrown by a
+ * single tile would otherwise unmount the entire workspace — the shell would
+ * stay on screen and every panel would go blank at once, which is impossible to
+ * diagnose from the UI. The boundary keeps a failure to its own tile and names
+ * it.
+ */
+function bounded(
+  name: string,
+  Component: React.FunctionComponent<IDockviewPanelProps>,
+): React.FunctionComponent<IDockviewPanelProps> {
+  function Bounded(props: IDockviewPanelProps) {
+    return (
+      <PanelErrorBoundary name={name}>
+        <Component {...props} />
+      </PanelErrorBoundary>
+    )
+  }
+  Bounded.displayName = `Bounded(${name})`
+  return Bounded
+}
+
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
-  conversation: ConversationPanel,
-  activity: ActivityPanel,
-  milestones: MilestonePanel,
-  voice: VoiceChannel,
-  write: WritePanel,
-  inspector: InspectorPanel,
+  conversation: bounded('Conversation', ConversationPanel),
+  activity: bounded('Pi Agent Activity', ActivityPanel),
+  milestones: bounded('Orchestrator Milestones', MilestonePanel),
+  voice: bounded('Voice', VoiceChannel),
+  write: bounded('Write', WritePanel),
+  inspector: bounded('Inspector', InspectorPanel),
 }
 
 interface PanelSpec {

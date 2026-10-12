@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
 from .api import account as account_api
@@ -60,6 +61,15 @@ def _install_middleware(app: FastAPI, settings: Settings) -> None:
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
+
+    # Opt-in Host allow-list. Left unset, any Host is accepted, which is what a
+    # LAN deployment needs because the address a phone uses is not known ahead of
+    # time. When Solo is reachable from an untrusted network, setting
+    # SOLO_ALLOWED_HOSTS stops a forged Host header being reflected into cookies.
+    allowed_hosts = settings.allowed_hosts_list
+    if allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+        logger.info("Host allow-list active: %s", ", ".join(allowed_hosts))
 
 
 def _mount_frontend(app: FastAPI, settings: Settings) -> None:

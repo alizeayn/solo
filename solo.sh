@@ -10,6 +10,8 @@
 #   ./solo.sh logs        follow the server log
 #   ./solo.sh update      pull the latest version and update incrementally
 #   ./solo.sh version     show the installed and available versions
+#   ./solo.sh cert        enable HTTPS for this machine (needed for phone voice)
+#   ./solo.sh access      show how to reach Solo from other devices
 #   ./solo.sh doctor      check prerequisites without changing anything
 #
 # Everything lives inside this repository: the virtualenv in ./venv, the built
@@ -142,7 +144,18 @@ load_env() {
   source "$ROOT_DIR/.env"
   set +a
   APP_PORT="${APP_PORT:-8080}"
-  BASE_URL="http://127.0.0.1:${APP_PORT}"
+  # Serving TLS from Solo is what makes voice input usable on a phone: browsers
+  # only expose the microphone in a *secure context*, so a plain http:// LAN
+  # address silently blocks it. Set SSL_CERTFILE/SSL_KEYFILE in .env to enable.
+  if [[ -n "${SSL_CERTFILE:-}" && -n "${SSL_KEYFILE:-}" ]]; then
+    SCHEME="https"
+    # A self-signed certificate is the normal case here, so do not verify it.
+    CURL_TLS=(-k)
+  else
+    SCHEME="http"
+    CURL_TLS=()
+  fi
+  BASE_URL="${SCHEME}://127.0.0.1:${APP_PORT}"
 }
 
 env_get() {
@@ -214,7 +227,7 @@ is_running() {
 wait_for_health() {
   local attempts="${1:-60}"
   for _ in $(seq 1 "$attempts"); do
-    if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
+    if curl -fsS "${CURL_TLS[@]}" "${BASE_URL}/api/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.5
@@ -316,7 +329,7 @@ status_solo() {
   load_env
   if is_running; then
     ok "Running (pid $(cat "$PID_FILE")) on ${BASE_URL}"
-    if curl -fsS "${BASE_URL}/api/health" 2>/dev/null; then
+    if curl -fsS "${CURL_TLS[@]}" "${BASE_URL}/api/health" 2>/dev/null; then
       echo
     else
       warn "Process alive but /api/health is not responding."
@@ -328,13 +341,14 @@ status_solo() {
 
 print_access() {
   local ip
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  mark_self_signed
+  ip="$(lan_ip)"
   echo
   echo "──────────────────────────────────────────────────────────────"
   echo " Solo is running  (version $(repo_version))"
   echo "──────────────────────────────────────────────────────────────"
   echo " Local:  ${BASE_URL}"
-  [[ -n "$ip" ]] && echo " LAN:    http://${ip}:${APP_PORT}"
+  [[ -n "$ip" ]] && echo " LAN:    ${SCHEME}://${ip}:${APP_PORT}   ← phones on this network"
   echo " User:   admin"
   if [[ -n "${GENERATED_PASSWORD:-}" ]]; then
     echo " Pass:   ${GENERATED_PASSWORD}"
@@ -345,10 +359,156 @@ print_access() {
     echo " Pass:   unchanged (already configured)"
   fi
   echo
+  if [[ "$SCHEME" == "https" ]]; then
+    echo " TLS is on. Voice input works from other devices."
+    [[ "${SSL_SELF_SIGNED:-0}" == "1" ]] && \
+      echo " Certificate is self-signed: accept the warning once per device."
+  else
+    echo " Voice input works on this machine, but a phone on the LAN needs"
+    echo " HTTPS — browsers only allow the microphone in a secure context."
+    echo " Enable it with:  ./solo.sh cert"
+  fi
+  echo
   echo " Logs:   ./solo.sh logs"
   echo " Stop:   ./solo.sh stop"
   echo " Update: ./solo.sh update"
+  echo " Access: ./solo.sh access"
   echo "──────────────────────────────────────────────────────────────"
+}
+
+# --------------------------------------------------------------------------- #
+# Network access
+# --------------------------------------------------------------------------- #
+
+# The first non-loopback IPv4 address, i.e. the one a phone on the same network
+# can reach. Falls back to empty so callers can degrade quietly.
+lan_ip() { hostname -I 2>/dev/null | awk '{print $1}' || true; }
+
+# Flag a self-signed certificate so the banner can warn about the browser prompt.
+mark_self_signed() {
+  SSL_SELF_SIGNED=0
+  [[ -n "${SSL_CERTFILE:-}" && -f "${SSL_CERTFILE:-}" ]] || return 0
+  have openssl || return 0
+  local issuer subject
+  issuer="$(openssl x509 -in "$SSL_CERTFILE" -noout -issuer 2>/dev/null || true)"
+  subject="$(openssl x509 -in "$SSL_CERTFILE" -noout -subject 2>/dev/null || true)"
+  [[ -n "$issuer" && "$issuer" == "$subject" ]] && SSL_SELF_SIGNED=1
+  return 0
+}
+
+# Explain how to reach Solo from other devices, and whether voice will work
+# there. This is the answer to "why can I not open it on my phone?".
+cmd_access() {
+  load_env
+  mark_self_signed
+  local ip
+  ip="$(lan_ip)"
+  echo
+  echo "──────────────────────────────────────────────────────────────"
+  echo " Reaching Solo from other devices"
+  echo "──────────────────────────────────────────────────────────────"
+  echo " This machine:   ${BASE_URL}"
+  [[ -n "$ip" ]] && echo " Same network:  ${SCHEME}://${ip}:${APP_PORT}"
+  echo " Bind address:  ${APP_HOST:-0.0.0.0}"
+  echo
+  if [[ "${APP_HOST:-0.0.0.0}" == "127.0.0.1" || "${APP_HOST:-0.0.0.0}" == "localhost" ]]; then
+    warn "APP_HOST is ${APP_HOST}, so only this machine can connect."
+    echo "  Set APP_HOST=0.0.0.0 in .env and restart to allow the LAN."
+  else
+    ok "Listening on all interfaces — other devices on the network can connect."
+  fi
+  echo
+  if [[ "$SCHEME" == "https" ]]; then
+    ok "HTTPS is on, so microphone and voice input work on other devices."
+    [[ "$SSL_SELF_SIGNED" == "1" ]] && cat <<'EOF'
+  The certificate is self-signed. Each device must accept the warning once.
+  On iOS you may also need Settings › General › VPN & Device Management to
+  trust it for microphone access to be granted.
+EOF
+  else
+    warn "HTTPS is off, so voice input will NOT work on other devices."
+    cat <<'EOF'
+  Browsers only expose the microphone in a secure context. Plain http over a
+  LAN address is not one, so tapping Start produces a permission error.
+
+  Enable HTTPS on this machine with:  ./solo.sh cert
+  That creates a self-signed certificate and turns on TLS for the LAN.
+EOF
+  fi
+  cat <<'EOF'
+
+  Beyond the local network, do not expose Solo directly. Put it behind an
+  authenticating TLS proxy (Caddy, nginx) or a private tunnel, and set
+  SOLO_ALLOWED_HOSTS. See docs/remote-access.md.
+──────────────────────────────────────────────────────────────
+EOF
+}
+
+# Generate a self-signed certificate covering this machine's addresses and turn
+# HTTPS on. This exists because voice input from a phone requires a secure
+# context, and a self-signed certificate is the smallest thing that provides one
+# on a home network.
+cmd_cert() {
+  load_env
+  local dir="$DATA_DIR/certs"
+  local cert="$dir/solo.crt" key="$dir/solo.key"
+  local ip hostname_ value
+  ip="$(lan_ip)"
+  hostname_="$(hostname 2>/dev/null || echo solo)"
+
+  command -v openssl >/dev/null 2>&1 \
+    || die "openssl is required to create a certificate."
+
+  [[ "${1:-}" == "--force" || "${1:-}" == "-f" ]] && rm -f "$cert" "$key"
+  if [[ -f "$cert" && -f "$key" ]]; then
+    ok "A certificate already exists at $cert"
+    echo "  Recreate it with: ./solo.sh cert --force"
+  else
+    mkdir -p "$dir"
+    chmod 700 "$dir"
+    log "Creating a self-signed certificate for this machine"
+    value="DNS:localhost,IP:127.0.0.1,DNS:${hostname_}.local"
+    [[ -n "$ip" ]] && value="${value},IP:${ip}"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+      -keyout "$key" -out "$cert" \
+      -subj "/CN=solo" \
+      -addext "subjectAltName=${value}" >/dev/null 2>&1 \
+      || die "openssl could not create the certificate."
+    chmod 600 "$key"
+    chmod 644 "$cert"
+    ok "Certificate written to $cert"
+  fi
+
+  set_env_key SSL_CERTFILE "$cert"
+  set_env_key SSL_KEYFILE "$key"
+  echo
+  ok "HTTPS enabled in .env"
+  echo "  Restart to apply:  ./solo.sh restart"
+  if [[ -n "$ip" ]]; then
+    echo "  Phone URL:         https://${ip}:${APP_PORT}"
+  fi
+  echo
+  echo "  The certificate is self-signed, so each device shows a warning once."
+  echo "  For an address with a real certificate, see docs/remote-access.md."
+  return 0
+}
+
+# Set KEY=VALUE in .env, replacing an existing entry. Keeps a single source of
+# truth so the backend and the launcher never disagree about the configuration.
+set_env_key() {
+  local key="$1" value="$2" env_file="$ROOT_DIR/.env" tmp
+  [[ -f "$env_file" ]] || : >"$env_file"
+  if grep -qE "^[[:space:]]*${key}=" "$env_file"; then
+    tmp="$(mktemp)"
+    awk -v k="$key" -v v="$value" '
+      $0 ~ "^[[:space:]]*" k "=" { print k "=" v; next } { print }
+    ' "$env_file" >"$tmp"
+    cat "$tmp" >"$env_file"
+    rm -f "$tmp"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >>"$env_file"
+  fi
+  return 0
 }
 
 # --------------------------------------------------------------------------- #
@@ -720,7 +880,7 @@ cmd_logs() {
 }
 
 usage() {
-  sed -n '3,16p' "$0"
+  sed -n '3,18p' "$0"
 }
 
 # `update` is the canonical command; `--update` is accepted because that is the
@@ -733,6 +893,8 @@ case "${1:-}" in
   status)  status_solo ;;
   logs)    cmd_logs ;;
   version) cmd_version ;;
+  cert)    shift || true; cmd_cert "$@" ;;
+  access)  cmd_access ;;
   doctor)  cmd_doctor ;;
   update|--update|-u) shift || true; update_impl "$@" ;;
   ""|-h|--help|help) usage ;;

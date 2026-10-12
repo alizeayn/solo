@@ -99,6 +99,31 @@ class Settings(BaseSettings):
     # user exists yet, an admin account is created from it. Used by install.sh.
     admin_password: str | None = None
 
+    # --- Network exposure ---
+    # Bind address lives above as ``app_host``: "0.0.0.0" (default) serves the
+    # local network, "127.0.0.1" restricts Solo to this machine.
+    #
+    # Comma-separated Host header allow-list. Empty (default) accepts any Host,
+    # which is what a LAN deployment needs: the address a phone will use is not
+    # known in advance. Set it when Solo is reachable from an untrusted network
+    # so a forged Host header cannot poison cookie domains or generated links.
+    allowed_hosts: str = ""
+    # TLS. Both must be set for Solo to serve HTTPS itself. This is not only
+    # about encryption: browsers expose the microphone only in a *secure
+    # context*, so voice input cannot work over plain http on a LAN address.
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        """Host allow-list as a list. Empty means "accept any Host"."""
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def https_enabled(self) -> bool:
+        """True when Solo terminates TLS itself (both cert and key are set)."""
+        return bool(self.ssl_certfile and self.ssl_keyfile)
+
     # --- Projects ---
     # Name of the per-project metadata directory created inside a project root.
     metadata_dir_name: str = ".solo"

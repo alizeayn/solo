@@ -433,3 +433,103 @@ async def test_prompt_context_is_bounded(settings_factory):
         huge, has_active_task=True, active_instruction=huge, active_summary=huge
     )
     assert len(fake.calls[0]["user"]) < module.MAX_MESSAGE_CHARS + 3000
+
+
+# --------------------------------------------------------------------------- #
+# Structured output that the provider does not actually support
+# --------------------------------------------------------------------------- #
+class _ScriptedClient(OpenRouterClient):
+    """An OpenRouterClient whose ``complete`` is scripted instead of networked."""
+
+    def __init__(self, responses: list[Any]) -> None:
+        super().__init__("test-key")
+        self._responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(self, **kwargs: Any) -> str:
+        self.calls.append(kwargs)
+        item = self._responses.pop(0) if self._responses else ""
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string", "enum": ["start_coding_task", "chat_or_explain"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["intent", "reason"],
+}
+
+
+async def test_complete_json_retries_without_response_format_on_400():
+    """A model that advertises structured output can still reject it.
+
+    OpenRouter answers an unsupported ``response_format`` with a bare 400 reading
+    "Provider returned error". Before this fallback the whole orchestrator
+    degraded to the rules router, which is what made it look broken.
+    """
+    client = _ScriptedClient(
+        [OpenRouterError("Provider returned error", status=400), '{"ok": true}']
+    )
+
+    result = await client.complete_json(
+        model="m", system="s", user="u", schema=_SCHEMA
+    )
+
+    assert result == {"ok": True}
+    assert len(client.calls) == 2
+    assert client.calls[0]["response_format"] is not None
+    # The retry must not ask for structured output again.
+    assert client.calls[1]["response_format"] is None
+
+
+async def test_complete_json_does_not_retry_a_real_failure():
+    """Auth and quota errors must surface, not be retried into a silent pass."""
+    client = _ScriptedClient([OpenRouterError("User not found.", status=401)])
+
+    with pytest.raises(OpenRouterError, match="User not found"):
+        await client.complete_json(model="m", system="s", user="u", schema=_SCHEMA)
+
+    assert len(client.calls) == 1
+
+
+async def test_fallback_prompt_describes_keys_without_echoing_the_schema():
+    """The fallback must not hand the model a schema document.
+
+    A weaker model returns the schema itself instead of an instance of it, which
+    is exactly what happened when the raw schema was embedded in the prompt.
+    """
+    client = _ScriptedClient(
+        [OpenRouterError("Provider returned error", status=400), '{"ok": true}']
+    )
+    await client.complete_json(model="m", system="BASE", user="u", schema=_SCHEMA)
+
+    fallback = client.calls[1]["messages"][0]["content"]
+    assert "BASE" in fallback
+    assert '"properties"' not in fallback
+    assert '"required"' not in fallback
+    # Keys and allowed values are still stated, so the reply can be validated.
+    assert "intent" in fallback
+    assert "chat_or_explain" in fallback
+    assert "reason" in fallback
+
+
+def test_schema_instructions_list_enum_values_without_picking_one():
+    """An example object would bias an enumerated field to its first value."""
+    from app.services.openrouter import _schema_instructions
+
+    text = _schema_instructions(_SCHEMA)
+    assert "one of" in text
+    assert "start_coding_task" in text and "chat_or_explain" in text
+    assert text.count("intent") == 1
+
+
+def test_structured_output_rejected_only_matches_400():
+    from app.services.openrouter import _structured_output_rejected
+
+    assert _structured_output_rejected(OpenRouterError("x", status=400)) is True
+    for code in (401, 402, 429, 500, None):
+        assert _structured_output_rejected(OpenRouterError("x", status=code)) is False

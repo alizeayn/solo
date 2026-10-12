@@ -161,26 +161,64 @@ class OpenRouterClient:
         temperature: float = 0.0,
         max_tokens: int = MAX_COMPLETION_TOKENS,
     ) -> dict[str, Any]:
-        """Completion constrained to JSON, validated by the caller's schema."""
-        response_format: dict[str, Any] | None = None
+        """Completion constrained to JSON, validated by the caller's schema.
+
+        The schema is requested through ``response_format`` first. Not every
+        model that advertises structured output actually honours it: the
+        catalogue flag is advisory, and a provider can answer a schema request
+        with a bare ``400 Provider returned error``. That reply is
+        indistinguishable from a genuinely malformed request, but it is cheap to
+        find out, so one retry is made *without* ``response_format``, describing
+        the shape in the prompt instead.
+
+        This is a transport-level fallback, not a loosening of validation: the
+        reply is still parsed by ``_parse_json_object`` and still has to satisfy
+        the caller's schema.
+        """
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
         if schema is not None:
-            response_format = {
+            response_format: dict[str, Any] = {
                 "type": "json_schema",
                 "json_schema": {"name": schema_name, "strict": True, "schema": schema},
             }
         else:
             response_format = {"type": "json_object"}
 
-        text = await self.complete(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
+        try:
+            text = await self.complete(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+            )
+        except OpenRouterError as exc:
+            if not _structured_output_rejected(exc):
+                raise
+            logger.info(
+                "model %s rejected response_format (HTTP %s); retrying without it",
+                model,
+                exc.status,
+            )
+            fallback_system = (
+                f"{system}\n\n"
+                "Reply with a single JSON object and nothing else. Do not repeat "
+                "this description and do not add commentary."
+                + _schema_instructions(schema)
+            )
+            text = await self.complete(
+                model=model,
+                messages=[
+                    {"role": "system", "content": fallback_system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=None,
+            )
         return _parse_json_object(text)
 
     # ------------------------------------------------------------------ #
@@ -219,6 +257,48 @@ class OpenRouterClient:
         if not isinstance(payload, dict):
             raise OpenRouterError("OpenRouter returned an unexpected response shape")
         return payload
+
+
+def _structured_output_rejected(error: OpenRouterError) -> bool:
+    """True when a failure looks like the provider refusing ``response_format``.
+
+    OpenRouter answers an unsupported parameter with a bare 400 whose message
+    reads "Provider returned error", so the status code is the only reliable
+    signal. A 400 on a schema request is worth exactly one retry without the
+    schema. Everything else — authentication, quota, transport — is surfaced
+    unchanged, because retrying would hide a real fault.
+    """
+    return error.status == 400
+
+
+def _schema_instructions(schema: dict[str, Any] | None) -> str:
+    """Describe required JSON keys in prose for models without ``response_format``.
+
+    Deliberately *not* the raw JSON Schema: a weaker model handed a schema
+    document tends to return the document itself instead of an instance of it.
+    Listing the keys, their types and any allowed values is both unambiguous and
+    far harder to misread, and it never suggests a value for an enumerated field
+    the way an example object would.
+    """
+    if not schema:
+        return ""
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return ""
+
+    lines: list[str] = ["Required keys:"]
+    for name, spec in properties.items():
+        spec = spec if isinstance(spec, dict) else {}
+        kind = spec.get("type")
+        allowed = spec.get("enum")
+        if isinstance(allowed, list) and allowed:
+            detail = "one of " + ", ".join(json.dumps(v) for v in allowed)
+        elif isinstance(kind, str):
+            detail = kind
+        else:
+            detail = "any"
+        lines.append(f"- {name}: {detail}")
+    return "\n".join(lines)
 
 
 def _error_message(response: httpx.Response) -> str:

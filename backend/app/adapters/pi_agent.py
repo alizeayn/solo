@@ -200,7 +200,13 @@ class PiCodingAgentAdapter:
                 return AgentResult(ok=False, summary=message, error=message)
 
             model = (state or {}).get("model") or {}
-            if not model.get("id"):
+            model_id = str(model.get("id") or "").strip()
+            # Pi reports the literal string "unknown" when the agent directory has
+            # no model selected. Treating that as a model would let the run start
+            # and fail deep inside the provider, which tells the user nothing.
+            # Catching it here turns a confusing "No API key found for the
+            # selected model" into an instruction they can act on.
+            if not model_id or model_id.lower() in {"unknown", "none", "null"}:
                 event = no_model_event()
                 await on_event(event)
                 return AgentResult(ok=False, summary=event.message, error=event.message)

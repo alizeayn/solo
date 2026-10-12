@@ -4,10 +4,23 @@ Solo is voice-native: the conversation is the interface and speech is its primar
 output. This document describes how that is wired, what is real today, and what
 is deliberately not built.
 
-The verified ElevenLabs API notes live in [`elevenlabs-docs/`](../elevenlabs-docs/)
+The verified ElevenLabs API notes live in [`ElevenLabs Docs/`](../ElevenLabs%20Docs/)
 at the repository root.
 
 ---
+
+## The interaction
+
+| | |
+|---|---|
+| **Start** | One button. The session opens and stays open. |
+| **Speak** | Normally. Turns are cut on silence; nothing is held down. |
+| **Interrupt** | Just start talking — Solo stops speaking. |
+| **End** | One button. The microphone is released. |
+
+`GET /api/voice/state` is deliberately **free of network I/O**: it is polled
+while a task runs, and resolving a voice there would put a third-party request on
+a hot path. The resolved configuration is only needed when Solo actually speaks.
 
 ## The loop
 
@@ -147,7 +160,7 @@ A task never fails because a voice was unavailable.
 | `GET` | `/api/voice/models` | Speech models for the account |
 | `GET` | `/api/voice/voices` | Voices for the account |
 | `PUT` | `/api/voice/settings` | Save model and voice selection |
-| `POST` | `/api/voice/transcribe` | One recorded utterance → text |
+| `POST` | `/api/voice/transcribe` | One recorded turn → text |
 | `GET` | `/api/voice/audio/{line_id}` | The synthesised MP3 for one line |
 
 WebSocket channels: `narration` (each line) and `voice` (interrupt/resume).
@@ -156,12 +169,18 @@ WebSocket channels: `narration` (each line) and `voice` (interrupt/resume).
 
 ## Limitations
 
-* **Turn-taking is push-to-talk, not full duplex.** The browser records one
-  utterance and posts it; there is no always-on voice activity detection. This is
-  enough for "speak a task, hear progress" and avoids a socket lifecycle that
-  would be premature.
+* **Turn-taking is a session with silence-based segmentation, not full duplex.**
+  One click opens the microphone and it stays open until the user ends the
+  session. Turns are cut on ~1s of silence using a Web Audio level analysis, so
+  nothing has to be held down. It is a lightweight voice-activity detector rather
+  than the realtime socket: a very quiet speaker may need to speak up, and a noisy
+  room can hold a turn open (capped at 20s).
 * **`scribe_v2_realtime` is not used.** Batch transcription has higher latency to
-  first word. It is the documented upgrade path.
+  first word. It is the documented upgrade path, and it would remove the need for
+  segmentation entirely.
+* **Capture pauses while Solo speaks.** Otherwise the microphone hears the
+  assistant's own voice and transcribes it as a new instruction. Interrupting is
+  still just talking: the input level is compared against the playback state.
 * **No streaming playback.** One MP3 per line, played to completion. Barge-in
   stops it, but a line cannot resume mid-way.
 * **Cost is real.** Every spoken line is billed per character — the second reason

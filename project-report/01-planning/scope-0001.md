@@ -95,6 +95,6 @@ were verified natively instead.
 ## 5. Repository baseline
 
 The repository existed but was **empty of source** — only `PROJECT_SPEC.md`,
-two empty documentation folders (`elevenlabs-docs/`, `piagent-docs/`) and a bare
+two empty documentation folders (`ElevenLabs Docs/`, `piagent-docs/`) and a bare
 `venv/`. The git remote `origin` was already configured
 (`https://github.com/alizeayn/solo.git`) with no commits.

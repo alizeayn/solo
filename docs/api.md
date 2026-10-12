@@ -561,7 +561,7 @@ message string.
 ## Voice
 
 Speech input and output. See [voice.md](voice.md) and
-[`elevenlabs-docs/`](../elevenlabs-docs/) for the verified API notes.
+[`ElevenLabs Docs/`](../ElevenLabs%20Docs/) for the verified API notes.
 
 | Method | Path | Purpose |
 |---|---|---|

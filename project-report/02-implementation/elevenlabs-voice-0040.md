@@ -11,7 +11,7 @@
 ## 1. The verified API facts
 
 Everything here was read from the official documentation on 2026-10-11 and is
-recorded in full in [`elevenlabs-docs/`](../../elevenlabs-docs/).
+recorded in full in [`ElevenLabs Docs/`](../../ElevenLabs%20Docs/).
 
 | Question | Answer |
 |---|---|
@@ -236,7 +236,7 @@ requirement — so the choice is informed rather than arbitrary.
 `components/VoiceChannel.test.tsx` *(new, 10)*,
 `hooks/useVoiceInput.test.ts` *(new, 6)*.
 
-**Docs** — `elevenlabs-docs/` *(new, 7 files)*, `docs/voice.md` *(new)*,
+**Docs** — `ElevenLabs Docs/` *(new, 7 files)*, `docs/voice.md` *(new)*,
 `docs/api.md`, `docs/architecture.md`, `README.md`, `scripts/e2e.sh`.
 
 ## Related

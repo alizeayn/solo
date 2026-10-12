@@ -52,20 +52,45 @@ Speech to text:
 | `scribe_v2_realtime` | Realtime recognition; ~150 ms latency |
 | `scribe_v2_medical` | Fine-tuned for clinical audio |
 
-### Versions that do **not** exist
+### What the live API actually returned
 
-Checked deliberately, because the request named them as possibilities:
+`GET /v1/models` on 2026-10-12, with a real key, returned **11 models**:
 
-- There is **no `eleven_v4_conversational`**. The realtime v4 family member is
-  `eleven_v4_turbo`. The conversational variant exists only for v3
-  (`eleven_v3_conversational`).
-- There is **no `eleven_turbo_v2_5`**. The v2.5 fast model is
-  `eleven_flash_v2_5`.
-- "Eleven v3" and "Eleven v4" are real; "Eleven v5" is not documented.
+| Model ID | TTS | Max characters |
+|---|---|---|
+| `eleven_v4` | yes | 10,000 |
+| `eleven_v4_turbo` | yes | 10,000 |
+| `eleven_v3` | yes | 5,000 |
+| `eleven_v3_conversational` | yes | 5,000 |
+| `eleven_multilingual_v2` | yes | 10,000 |
+| `eleven_flash_v2_5` | yes | 40,000 |
+| `eleven_turbo_v2_5` | yes | 40,000 |
+| `eleven_turbo_v2` | yes | 30,000 |
+| `eleven_flash_v2` | yes | 30,000 |
+| `eleven_english_sts_v2` | no | 5,000 |
+| `eleven_multilingual_sts_v2` | no | 10,000 |
 
-A static allowlist would therefore have been wrong in both directions: it would
-have offered IDs that do not exist and hidden account-specific ones that do. This
-is why discovery drives the UI.
+Note the two `_sts_` models: they are speech-to-speech, so `can_do_text_to_speech`
+is false and they must never be offered for spoken output.
+
+### A correction to an earlier claim
+
+An earlier revision of this file stated that **`eleven_turbo_v2_5` does not
+exist**. **That was wrong.** The live API returns it, and it is a full
+text-to-speech model with a 40,000-character limit. The model catalog table in
+the documentation simply does not list it. The error is recorded rather than
+quietly deleted, because it is the clearest possible demonstration of the point
+below.
+
+What is still true: there is **no `eleven_v4_conversational`**. The realtime v4
+family member is `eleven_v4_turbo`; a conversational variant exists only for v3.
+
+### Why the UI discovers rather than validates against a list
+
+A hardcoded catalogue would have been wrong in **both** directions: it would have
+hidden a real model (`eleven_turbo_v2_5`) *and* offered one that does not resolve
+(`eleven_v4_conversational`). Documentation drifts; the API is the account's
+actual entitlement. Discovery, not a list, is what the UI uses.
 
 ## Choosing a default
 

@@ -61,7 +61,7 @@ the validation flow that demanded it (D-37) was removed.
 ## Verified API facts
 
 Checked against the official documentation rather than assumed, and recorded in
-full in [`elevenlabs-docs/`](../../elevenlabs-docs/):
+full in [`ElevenLabs Docs/`](../../ElevenLabs%20Docs/):
 
 - Authentication is the `xi-api-key` header, **not** a Bearer token.
 - `GET /v1/models` returns what **this account** can use — so models are

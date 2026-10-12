@@ -35,7 +35,7 @@ consumes, so the voice never reads raw agent activity.
 | Speech in | Browser recording → backend transcription → the **existing** message endpoint |
 | Configuration | A real Voice settings pane: key, validation, model discovery, voice discovery |
 | Model selection | Live discovery from the account, split by capability |
-| Documentation | Verified ElevenLabs API notes in `elevenlabs-docs/` |
+| Documentation | Verified ElevenLabs API notes in `ElevenLabs Docs/` |
 
 ## The decision that shapes everything: no Agents Platform
 
@@ -67,7 +67,7 @@ and the old validation flow that demanded it was removed.
 6. How does speech input avoid becoming a parallel dispatch path?
 
 Answers are in [Implementation 0040](../02-implementation/elevenlabs-voice-0040.md)
-and the verified notes in [`elevenlabs-docs/`](../../elevenlabs-docs/).
+and the verified notes in [`ElevenLabs Docs/`](../../ElevenLabs%20Docs/).
 
 ## Definition of done
 
@@ -84,5 +84,5 @@ and the verified notes in [`elevenlabs-docs/`](../../elevenlabs-docs/).
 - [Implementation 0040](../02-implementation/elevenlabs-voice-0040.md)
 - [Defect log 0042](../04-defects/defect-log-0042.md)
 - [Verification 0043](../05-verification/acceptance-criteria-0043.md)
-- [`elevenlabs-docs/`](../../elevenlabs-docs/) — verified API notes
+- [`ElevenLabs Docs/`](../../ElevenLabs%20Docs/) — verified API notes
 - [`docs/voice.md`](../../docs/voice.md) — the integration reference

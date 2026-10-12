@@ -450,7 +450,7 @@ file exists on disk — and passes with the globally installed `pi` removed from
 │   ├── hooks/          theme, WebSocket, media query, voice input, playback
 │   └── state/          workspace and theme providers
 ├── docs/               architecture, projects, pi-agent, orchestrator, voice, api
-├── elevenlabs-docs/    verified ElevenLabs API notes (models, TTS, STT, voices)
+├── ElevenLabs Docs/    verified ElevenLabs API notes (models, TTS, STT, voices)
 ├── "Pi Agent Docs"/    Pi protocol reference (v1.1.0) + integration notes
 ├── scripts/            dev, e2e, e2e-live, backup, restore
 ├── solo.sh             install, run, update
@@ -502,7 +502,7 @@ and start.
 - [docs/updating.md](docs/updating.md) — in-place updates, versioning, rollback
 - [docs/deployment.md](docs/deployment.md) — Docker, HTTPS, backup and restore
 - [docs/api.md](docs/api.md) — REST and WebSocket reference
-- [elevenlabs-docs/](elevenlabs-docs/) — verified ElevenLabs API notes (models, TTS, STT, voices)
+- [ElevenLabs Docs/](ElevenLabs%20Docs/) — verified ElevenLabs API notes (models, TTS, STT, voices)
 
 ## License
 

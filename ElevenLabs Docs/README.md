@@ -4,8 +4,10 @@ Verified notes on the ElevenLabs APIs Solo uses, kept next to the code so future
 work starts from checked facts rather than assumptions or outdated examples.
 
 Every statement here was read from the official documentation at
-<https://elevenlabs.io/docs> (the `.md` form of each page) on **2026-10-11**, and
-anything that could be checked against the live API was.
+<https://elevenlabs.io/docs> (the `.md` form of each page) on **2026-10-11**.
+Where something could be checked against the live API it was checked on
+**2026-10-12**, and the results are in [07-live-verified.md](07-live-verified.md) —
+including one claim in this folder that turned out to be wrong.
 
 | File | Covers |
 |---|---|
@@ -15,6 +17,7 @@ anything that could be checked against the live API was.
 | [04-speech-to-text.md](04-speech-to-text.md) | Transcription, realtime recognition |
 | [05-voices.md](05-voices.md) | Voice discovery and selection |
 | [06-solo-integration.md](06-solo-integration.md) | How Solo wires these into the narration pipeline |
+| [07-live-verified.md](07-live-verified.md) | What a real key actually returned: permissions, plan limits, error shapes |
 
 ## Sources
 

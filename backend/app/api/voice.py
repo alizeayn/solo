@@ -31,6 +31,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..deps import ContainerDep, CurrentUser
+from ..services.narration import Priority
 from ..services.elevenlabs import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
@@ -106,6 +107,42 @@ async def _state_payload(container: ContainerDep) -> dict[str, Any]:
 async def voice_state(container: ContainerDep, _: CurrentUser) -> dict[str, Any]:
     """What the voice channel is doing, and what it recently said."""
     return await _state_payload(container)
+
+
+class SayRequest(BaseModel):
+    """A line to speak that belongs to the conversation, not to a task."""
+
+    text: str = Field(min_length=1, max_length=600)
+    kind: str = Field(default="reply", max_length=24)
+
+
+@router.post("/say", response_model=dict)
+async def say(
+    payload: SayRequest, container: ContainerDep, _: CurrentUser
+) -> dict[str, Any]:
+    """Speak a line through the normal narration pipeline.
+
+    Used for the opening greeting and other conversational lines. Routing them
+    through the same channel as milestone updates means one synthesis path, one
+    WebSocket stream and one player, rather than a second mechanism that would
+    drift from the first.
+
+    ``IMPORTANT`` priority keeps the line above routine progress, and it is below
+    ``PROGRESS`` in the barge-in check only in the sense that matters: an
+    acknowledgement is never dropped just because the user is still speaking.
+    """
+    line = await container.narration.announce(
+        payload.text,
+        kind=payload.kind,
+        priority=int(Priority.IMPORTANT),
+    )
+    # `state()` already has a `queued` key meaning "how many lines are pending",
+    # so the outcome of this call is nested rather than flattened on top of it.
+    return {
+        "queued": line is not None,
+        "id": line.id if line is not None else None,
+        "state": container.narration.state(),
+    }
 
 
 @router.post("/interrupt", response_model=dict)

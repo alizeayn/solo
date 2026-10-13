@@ -147,6 +147,19 @@ export const api = {
       }),
     resume: () => request<VoiceState>('/api/voice/resume', { method: 'POST' }),
 
+    /**
+     * Speak a conversational line (the session greeting, or an acknowledgement).
+     *
+     * It goes through the same narration pipeline as milestone updates, so there
+     * is one synthesis path, one stream and one player rather than a second
+     * mechanism that would drift from the first.
+     */
+    say: (text: string, kind = 'reply') =>
+      request<{ queued: boolean; id: string | null; state: VoiceState }>('/api/voice/say', {
+        method: 'POST',
+        body: JSON.stringify({ text, kind }),
+      }),
+
     /** Speech models the configured account can actually use. */
     models: () => request<VoiceModel[]>('/api/voice/models'),
     /** Voices available to the account, so a voice is chosen not pasted. */

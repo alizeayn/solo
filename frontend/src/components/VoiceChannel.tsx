@@ -43,7 +43,7 @@ const KIND_LABEL: Record<string, string> = {
 const BARGE_IN_LEVEL = 0.3
 
 export default function VoiceChannel() {
-  const { reportError, sendMessage, narration: lines, connection } = useWorkspace()
+  const { reportError, sendMessage, narration: lines, connection, project, tasks } = useWorkspace()
   const [state, setState] = useState<VoiceState | null>(null)
   const [heard, setHeard] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -98,6 +98,36 @@ export default function VoiceChannel() {
   useEffect(() => {
     setPaused(isSpeaking)
   }, [isSpeaking, setPaused])
+
+  // Open the conversation. A voice session that begins with silence gives the
+  // user nothing to respond to, so Solo greets them and asks what they want --
+  // spoken through the same pipeline as everything else, which means it is also
+  // written into the transcript below.
+  const greeted = useRef(false)
+  const activeTask = tasks.find((task) =>
+    ['running', 'RUNNING', 'queued', 'QUEUED', 'pending'].includes(String(task.status)),
+  )
+  const greeting = useMemo(() => {
+    if (activeTask) {
+      return 'Hello again. I am still working on the current task. What would you like me to change?'
+    }
+    if (project?.name) {
+      return `Hello. I am listening. What would you like me to do in ${project.name}?`
+    }
+    return 'Hello. I am listening. What would you like me to work on?'
+  }, [activeTask, project?.name])
+
+  useEffect(() => {
+    if (!active) {
+      greeted.current = false
+      return
+    }
+    if (greeted.current) return
+    greeted.current = true
+    void api.voice.say(greeting, 'greeting').catch(() => {
+      /* the session still works without the spoken greeting */
+    })
+  }, [active, greeting])
 
   // Interrupting is just talking: no button, no shortcut.
   const levelRef = useRef(level)

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   voiceState: {} as Record<string, unknown>,
   transcribe: vi.fn(),
   sendMessage: vi.fn(),
+  say: vi.fn(async (_text: string, _kind?: string) => ({ queued: true, id: 'g1', state: {} })),
   reportError: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../api/client', () => ({
     voice: {
       state: vi.fn(async () => mocks.voiceState),
       transcribe: (...a: unknown[]) => mocks.transcribe(...a),
+      say: (text: string, kind?: string) => mocks.say(text, kind),
       audioUrl: (id: string) => `/api/voice/audio/${id}`,
     },
   },
@@ -63,7 +65,14 @@ describe('VoiceChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.voiceState = CONFIGURED
-    mocks.state = { narration: [], connection: 'open', sendMessage: mocks.sendMessage, reportError: mocks.reportError }
+    mocks.state = {
+      narration: [],
+      connection: 'open',
+      sendMessage: mocks.sendMessage,
+      reportError: mocks.reportError,
+      project: { id: 'p1', name: 'demo' },
+      tasks: [],
+    }
     mocks.session = {
       supported: true, active: false, state: 'idle', level: 0, error: null,
       start: mocks.start, stop: mocks.stop, setPaused: mocks.setPaused,
@@ -233,5 +242,63 @@ describe('VoiceChannel', () => {
   it('shows an honest empty state', async () => {
     render(<VoiceChannel />)
     expect(await screen.findByText(/Nothing to say yet/i)).toBeInTheDocument()
+  })
+})
+
+describe('VoiceChannel conversation start', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.voiceState = CONFIGURED
+    mocks.state = {
+      narration: [],
+      connection: 'open',
+      sendMessage: mocks.sendMessage,
+      reportError: mocks.reportError,
+      project: { id: 'p1', name: 'demo' },
+      tasks: [],
+    }
+    mocks.session = {
+      supported: true, active: false, state: 'idle', level: 0, error: null,
+      start: mocks.start, stop: mocks.stop, setPaused: mocks.setPaused,
+    }
+    mocks.playback = {
+      speaking: false, enabled: true, blocked: false, currentId: null,
+      setEnabled: mocks.setPlaybackEnabled, stop: mocks.stopSpeaking,
+    }
+  })
+
+  it('greets the user when the session opens, and names the project', async () => {
+    // A session that opens in silence gives the user nothing to respond to.
+    mocks.session = { ...mocks.session, active: true, state: 'listening' }
+    render(<VoiceChannel />)
+
+    await waitFor(() => expect(mocks.say).toHaveBeenCalled())
+    const [text, kind] = mocks.say.mock.calls[0]
+    expect(kind).toBe('greeting')
+    expect(String(text)).toMatch(/what would you like/i)
+    expect(String(text)).toContain('demo')
+  })
+
+  it('greets once per session, not on every re-render', async () => {
+    mocks.session = { ...mocks.session, active: true, state: 'listening' }
+    const { rerender } = render(<VoiceChannel />)
+    await waitFor(() => expect(mocks.say).toHaveBeenCalledTimes(1))
+
+    rerender(<VoiceChannel />)
+    rerender(<VoiceChannel />)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(mocks.say).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers to change the current task when one is still running', async () => {
+    mocks.state = {
+      ...mocks.state,
+      tasks: [{ id: 't1', status: 'running', instruction: 'build a page' }],
+    }
+    mocks.session = { ...mocks.session, active: true, state: 'listening' }
+    render(<VoiceChannel />)
+
+    await waitFor(() => expect(mocks.say).toHaveBeenCalled())
+    expect(String(mocks.say.mock.calls[0][0])).toMatch(/still working/i)
   })
 })

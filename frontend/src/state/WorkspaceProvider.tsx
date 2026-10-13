@@ -93,6 +93,27 @@ function appendUnique<T extends { id: string | number }>(items: T[], incoming: T
   return [...items, incoming]
 }
 
+/**
+ * Merge one narration line into the list, replacing any line with the same id.
+ *
+ * A line is published twice under one id: queued (`spoken: false`) and then
+ * delivered (`spoken: true`, plus `error` when synthesis failed). Appending
+ * blindly kept only the first, so every line stayed unspoken, the player skipped
+ * them all, and audio that had already been generated and paid for was never
+ * fetched. Ids are stable, so an upsert is the correct operation.
+ */
+export function upsertNarration(
+  lines: NarrationLine[],
+  incoming: NarrationLine,
+  keep = 100,
+): NarrationLine[] {
+  const index = lines.findIndex((item) => item.id === incoming.id)
+  if (index === -1) return [...lines, incoming].slice(-keep)
+  const next = [...lines]
+  next[index] = { ...next[index], ...incoming }
+  return next
+}
+
 export function WorkspaceProvider({
   children,
   onSignedOut,
@@ -281,7 +302,10 @@ export function WorkspaceProvider({
     if (envelope.channel === 'narration') {
       const line = envelope.payload as unknown as NarrationLine
       if (!line.text) return
-      setNarration((previous) => appendUnique(previous, line).slice(-100))
+      // A narration line is published twice under the same id -- queued, then
+      // delivered. Appending kept only the first, so every line stayed unspoken
+      // and the player never fetched a single MP3. See upsertNarration.
+      setNarration((previous) => upsertNarration(previous, line))
       return
     }
     if (envelope.channel === 'voice') {
@@ -331,6 +355,17 @@ export function WorkspaceProvider({
         if (taskId) {
           const eventList = await api.tasks.events(taskId)
           if (!cancelled) setEvents(eventList)
+        }
+        // Narration lines spoken during the gap are gone from the stream, so
+        // pull the recent ones back. Without this a task that narrated while the
+        // socket was down produced audio nobody was ever told about.
+        const voiceState = await api.voice.state()
+        if (cancelled) return
+        const recent = (voiceState.recent ?? []) as NarrationLine[]
+        if (recent.length > 0) {
+          setNarration((previous) =>
+            recent.reduce((acc, item) => upsertNarration(acc, item), previous),
+          )
         }
       } catch (cause) {
         if (!cancelled) handleFailure(cause)

@@ -78,11 +78,26 @@ async def _state_payload(container: ContainerDep) -> dict[str, Any]:
         "progress_speech_enabled", True
     )
     state.update(status)
-    # `audio_available` describes the transport, which is authoritative about
-    # whether it is currently configured to speak.
-    state["audio_available"] = bool(
-        state.get("audio_available") or container.narration.state().get("audio_available")
+
+    # Deliberately NOT an OR of the two sources. `voice_status()` reports whether
+    # Solo is *configured* to speak; narration reports whether speaking actually
+    # *works*. An account with an exhausted quota is both configured and silent,
+    # and OR-ing them reported "voice-active" while every request returned 401 —
+    # which is exactly how a broken integration looked healthy.
+    narration_state = container.narration.state()
+    state["voice_configured"] = bool(status.get("audio_available"))
+    # Audio is available when Solo is *configured* to speak (a key, a model and a
+    # voice) and the last attempt did not fail. Derived from the configuration
+    # plus the recorded failure rather than from the transport's internal flag,
+    # which only means "a configuration has been resolved at least once" and so
+    # reads false before the first delivery even on a perfectly good account.
+    state["audio_available"] = (
+        state["voice_configured"] and narration_state.get("audio_error") is None
     )
+    state["audio_error"] = narration_state.get("audio_error")
+    state["speech_failures"] = narration_state.get("failed", 0)
+    # "narration-only" is a working mode, not a failure: milestones still reach
+    # the user as text, they are simply not spoken aloud.
     state["phase"] = "voice-active" if state["audio_available"] else "narration-only"
     return state
 

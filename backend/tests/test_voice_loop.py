@@ -193,6 +193,9 @@ def test_the_selected_model_and_voice_reach_the_runtime(client, elevenlabs):
     assert state["model_id"] == "eleven_flash_v2_5"
     assert state["voice_id"] == "voice-1"
     assert state["configured"] is True
+    # A configured account reports audio as available until an attempt actually
+    # fails. What must never happen is reporting it available *after* a failure.
+    assert state["voice_configured"] is True
     assert state["audio_available"] is True, "a configured transport must report audio"
     assert state["phase"] == "voice-active"
 

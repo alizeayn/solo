@@ -559,11 +559,16 @@ class ElevenLabsTransport:
     async def deliver(self, line: Any) -> None:
         config = await self._resolve()
         if config is None:
-            # Not configured: behave exactly like the recording transport so the
-            # pipeline stays observable and nothing is silently lost.
+            # Not configured. This is a legitimate narration-only mode rather than
+            # a crash, but it is still not a spoken line: returning normally here
+            # made narration record text-only progress as *spoken*, which is the
+            # same dishonesty as swallowing a synthesis failure. The caller
+            # records the reason and keeps the text.
             self._configured = False
-            self._remember(line)
-            return
+            raise ElevenLabsError(
+                "No voice is configured. Add an ElevenLabs key and voice in "
+                "Settings \u203a Voice to have progress spoken aloud."
+            )
 
         self._configured = True
         try:
@@ -573,14 +578,15 @@ class ElevenLabsTransport:
                 model_id=config.model_id,
             )
         except ElevenLabsError as exc:
-            # Keep the line; only the audio is missing.
-            logger.info("elevenlabs synthesis failed: %s", exc)
-            self._remember(line)
-            return
+            # Report the failure instead of swallowing it. Narration records it,
+            # keeps the line as text for the UI, and marks it not-spoken. Swallow-
+            # ing it here is what made a line with no audio look spoken, and left
+            # the user with no way to learn that voice was unavailable.
+            logger.warning("elevenlabs synthesis failed: %s", exc)
+            raise
         except Exception:  # noqa: BLE001 - audio must never break a task
             logger.warning("elevenlabs transport failed", exc_info=True)
-            self._remember(line)
-            return
+            raise
 
         # Mark the line as spoken only once its audio exists. `spoken` is
         # what the player uses to decide whether there is anything to

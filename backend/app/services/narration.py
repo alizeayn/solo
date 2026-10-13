@@ -140,6 +140,10 @@ class NarrationService:
         self._lock = asyncio.Lock()
         self.listening = False
         self.dropped = 0
+        # Delivery failures. Tracked so the UI is never told that voice is
+        # working when the account cannot actually synthesise anything.
+        self.failures = 0
+        self.last_error: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -265,14 +269,33 @@ class NarrationService:
                     if self.listening and line.priority > int(Priority.CRITICAL):
                         self.dropped += 1
                         continue
+                    delivered = True
+                    failure: str | None = None
                     try:
                         await self._transport.deliver(line)
-                    except Exception:  # noqa: BLE001 - audio must never break the app
-                        logger.warning("narration transport failed", exc_info=True)
+                    except Exception as exc:  # noqa: BLE001 - audio must never break the app
+                        # A failed delivery is NOT a spoken line. Recording it as
+                        # one would report progress that never reached the user.
+                        delivered = False
+                        failure = str(exc).strip() or type(exc).__name__
+                        logger.warning("narration transport failed: %s", failure)
+                    if delivered:
+                        self.last_error = None
+                    else:
+                        self.failures += 1
+                        self.last_error = {
+                            "message": failure,
+                            "text": line.text,
+                            "at": datetime.now(timezone.utc).isoformat(),
+                        }
                     async with self._lock:
                         self._history.append(line)
                         del self._history[:-20]
-                    await self._publish(line, spoken=True)
+                    await self._publish(
+                        line,
+                        spoken=delivered,
+                        extra={"error": failure} if failure else None,
+                    )
                     if self._min_interval > 0:
                         await asyncio.sleep(self._min_interval)
                 self._wake.clear()
@@ -304,20 +327,28 @@ class NarrationService:
         ]
 
     def state(self) -> dict[str, Any]:
+        configured_audio = bool(
+            getattr(self._transport, "audio_available", None)
+            if getattr(self._transport, "audio_available", None) is not None
+            else getattr(self._transport, "name", "") != "recording"
+        )
         return {
             "enabled": True,
             "transport": getattr(self._transport, "name", "unknown"),
-            # A transport knows best: the ElevenLabs one reports whether it is
-            # actually configured, not merely present.
-            "audio_available": bool(
-                getattr(self._transport, "audio_available", None)
-                if getattr(self._transport, "audio_available", None) is not None
-                else getattr(self._transport, "name", "") != "recording"
-            ),
+            # A transport knows best whether it is configured, but *configured* is
+            # not the same as *working*: an exhausted quota is configured and
+            # still silent. Once a delivery has actually failed, audio is not
+            # available, and the reason travels with it.
+            "audio_available": configured_audio and self.last_error is None,
+            "audio_error": self.last_error,
             "listening": self.listening,
             "queued": len(self._queue),
             "dropped": self.dropped,
-            "spoken": len(self._history),
+            # Count lines that really produced audio, not lines we attempted.
+            "spoken": sum(
+                1 for line in self._history if line.spoken_at is not None
+            ),
+            "failed": self.failures,
             "recent": self.recent(10),
         }
 

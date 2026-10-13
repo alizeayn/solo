@@ -287,14 +287,16 @@ class Line:
         self.id = line_id
 
 
-async def test_without_configuration_the_transport_records_and_says_so():
+async def test_without_configuration_the_transport_says_so():
+    """Unconfigured voice is reported, never passed off as a spoken line."""
+
     transport = ElevenLabsTransport(lambda: _none())
     line = Line("Task complete.")
-    await transport.deliver(line)
-    assert transport.name == "recording"
+
+    with pytest.raises(ElevenLabsError, match="No voice is configured"):
+        await transport.deliver(line)
+
     assert transport.audio_available is False
-    # The line is still kept, so nothing is silently lost.
-    assert transport.recent_lines() == [line]
     assert transport.audio_for("line-1") is None
 
 
@@ -315,31 +317,116 @@ async def test_when_configured_the_transport_synthesises_real_audio():
     assert transport.audio_for("line-1") == (b"AUDIO", "audio/mpeg")
 
 
-async def test_a_synthesis_failure_keeps_the_line_and_loses_only_the_audio():
-    """A task must never break because a voice was unavailable."""
+class _BrokenClient:
+    async def synthesize(self, *_args, **_kwargs):
+        raise ElevenLabsError("ElevenLabs rejected the API key.")
 
-    class Broken:
-        async def synthesize(self, *_args, **_kwargs):
-            raise ElevenLabsError("ElevenLabs rejected the API key.")
+
+async def test_a_synthesis_failure_is_reported_rather_than_swallowed():
+    """The transport must not pretend the line was spoken.
+
+    It previously caught the failure, logged it and returned normally, which made
+    narration record a line that has no audio as *spoken*. The user was then told
+    voice was working while every request failed.
+    """
 
     async def config():
-        return type("C", (), {"client": Broken(), "voice_id": "v", "model_id": "m"})()
+        return type("C", (), {"client": _BrokenClient(), "voice_id": "v", "model_id": "m"})()
 
     transport = ElevenLabsTransport(config)
     line = Line("Still worth saying.")
-    await transport.deliver(line)  # must not raise
-    assert transport.recent_lines() == [line]
+
+    with pytest.raises(ElevenLabsError):
+        await transport.deliver(line)
+
+    # No audio was produced, so none is offered to the player.
     assert transport.audio_for("line-1") is None
 
 
-async def test_an_unexpected_transport_error_is_contained():
+async def test_an_unconfigured_transport_reports_rather_than_faking_success():
+    """Narration-only is a valid mode, but it is not a *spoken* line.
+
+    Returning normally made narration record text-only progress as spoken, the
+    same dishonesty as swallowing a synthesis failure.
+    """
+
     async def config():
-        raise RuntimeError("the settings store exploded")
+        return None
 
     transport = ElevenLabsTransport(config)
-    line = Line("Survives.")
-    await transport.deliver(line)  # must not raise
-    assert transport.recent_lines() == [line]
+    with pytest.raises(ElevenLabsError, match="No voice is configured"):
+        await transport.deliver(Line("Still worth saying."))
+    assert transport.audio_for("line-1") is None
+
+
+async def test_an_unexpected_transport_error_is_raised_for_the_caller():
+    """A non-ElevenLabs fault propagates too, so it cannot pass as success."""
+
+    class Exploding:
+        async def synthesize(self, *_args, **_kwargs):
+            raise RuntimeError("the provider client exploded")
+
+    async def config():
+        return type("C", (), {"client": Exploding(), "voice_id": "v", "model_id": "m"})()
+
+    transport = ElevenLabsTransport(config)
+    with pytest.raises(RuntimeError):
+        await transport.deliver(Line("Survives."))
+
+
+class _FailingTransport:
+    """A transport whose synthesis always fails, as an exhausted quota does."""
+
+    name = "elevenlabs"
+    audio_available = True
+    stops = 0
+
+    def __init__(self, message: str = "This request exceeds your quota of 10000.") -> None:
+        self.message = message
+
+    async def deliver(self, _line) -> None:
+        raise ElevenLabsError(self.message)
+
+    async def stop(self) -> None:
+        return None
+
+    def audio_for(self, _line_id):  # pragma: no cover - not reached
+        return None
+
+
+async def test_a_failed_synthesis_keeps_the_text_and_reports_the_failure():
+    """The guarantee that replaces "a task never breaks".
+
+    Audio failing must not lose information and must not look like success: the
+    line stays in the transcript as text, it is marked not-spoken, and the reason
+    is surfaced so the user can act on it.
+    """
+    import asyncio
+
+    from app.services.narration import NarrationService, Priority
+
+    service = NarrationService(transport=_FailingTransport(), min_interval=0.0)
+    await service.start()
+    try:
+        await service.announce(
+            "I'm making the changes now.", kind="milestone", priority=int(Priority.PROGRESS)
+        )
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if service.failures:
+                break
+    finally:
+        await service.stop()
+
+    state = service.state()
+    assert service.failures == 1
+    assert state["spoken"] == 0, "a line with no audio is not a spoken line"
+    assert state["audio_available"] is False
+    assert "quota" in (state["audio_error"] or {}).get("message", "")
+
+    recent = service.recent(5)
+    assert [item["text"] for item in recent] == ["I'm making the changes now."]
+    assert recent[0]["spoken"] is False
 
 
 async def test_configuration_is_resolved_per_line_not_cached():

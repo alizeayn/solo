@@ -148,6 +148,22 @@ export const api = {
     resume: () => request<VoiceState>('/api/voice/resume', { method: 'POST' }),
 
     /**
+     * A single-use token for the Realtime Speech-to-Text socket.
+     *
+     * The API key never reaches the browser: the server mints a token scoped to
+     * one session. `available: false` carries a readable reason instead of
+     * throwing, so the UI can fall back to batch transcription and say why.
+     */
+    sttToken: () =>
+      request<{
+        available: boolean
+        reason: string | null
+        token: string | null
+        model_id?: string
+        url?: string
+      }>('/api/voice/stt-token', { method: 'POST' }),
+
+    /**
      * Speak a conversational line (the session greeting, or an acknowledgement).
      *
      * It goes through the same narration pipeline as milestone updates, so there

@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 #: ``ElevenLabs Docs/01-authentication.md`` and can be set per deployment.
 DEFAULT_BASE_URL = "https://api.elevenlabs.io"
 
+#: Realtime Speech-to-Text. The browser opens this socket with a single-use
+#: token, so the API key never leaves the server.
+REALTIME_STT_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
+REALTIME_STT_MODEL = "scribe_v2_realtime"
+
+
 #: Fast, cheap synthesis for spoken progress. A milestone that arrives seconds
 #: late is worse than one that sounds slightly less rich, and Flash v2.5 has a
 #: ~75 ms median latency and a 40,000-character limit.
@@ -292,6 +298,29 @@ class ElevenLabsClient:
     # ------------------------------------------------------------------ #
     # Account
     # ------------------------------------------------------------------ #
+    async def create_realtime_token(self) -> str:
+        """Mint a single-use token the browser can open a Realtime socket with.
+
+        The API key itself must never reach a browser, so the client is handed a
+        token scoped to one Realtime Speech-to-Text session instead. ElevenLabs
+        documents exactly this as the pattern for client-side streaming.
+
+        Note that minting a token consumes no credits; only the audio that
+        follows does. The endpoint is `single-use-token/realtime_scribe`, and the
+        service rejects any other spelling.
+        """
+        response = await self._request("POST", "/v1/single-use-token/realtime_scribe")
+        if response.status_code != 200:
+            raise self._error(response)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ElevenLabsError("ElevenLabs returned unreadable JSON.") from exc
+        token = payload.get("token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not token:
+            raise ElevenLabsError("ElevenLabs returned no token.")
+        return token
+
     async def verify_key(self) -> dict[str, Any]:
         """The account behind the key.
 

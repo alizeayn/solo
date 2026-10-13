@@ -79,6 +79,12 @@ class StubElevenLabs:
             return Response(200, MODELS)
         if "/v2/voices" in url:
             return Response(200, VOICES)
+        if "/v1/single-use-token/" in url:
+            # Realtime needs a scoped token, not the API key. The type is part
+            # of the path and is validated by the real service.
+            if not url.endswith("/realtime_scribe"):
+                return Response(422, {"detail": "unsupported token type"})
+            return Response(200, {"token": "sutkn_stub_token"})
         if "/v1/speech-to-text" in url:
             self.transcribed += 1
             return Response(
@@ -441,3 +447,41 @@ async def test_an_empty_greeting_is_rejected(client):
     _sign_in(client)
     response = client.post("/api/voice/say", json={"text": ""})
     assert response.status_code == 422
+
+
+async def test_the_realtime_token_endpoint_never_returns_the_api_key(client, elevenlabs):
+    """The browser gets a scoped token; the API key stays on the server.
+
+    This is the documented pattern for client-side streaming, and it is the only
+    reason a browser can open a Realtime socket without holding a key that could
+    also spend the account's credits on anything else.
+    """
+    _sign_in(client)
+    client.put("/api/settings", json={"elevenlabs_api_key": "sk_live_abc123"})
+
+    response = client.post("/api/voice/stt-token")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["available"] is True, payload
+    token = payload["token"]
+    assert isinstance(token, str) and token
+    # The socket URL and model are not secrets; the key must not appear at all.
+    assert payload["url"].startswith("wss://")
+    assert "xi-api-key" not in payload["url"]
+    assert "xi-api-key" not in response.text
+    assert "sk_" not in response.text
+
+
+async def test_the_realtime_token_endpoint_explains_itself_when_unconfigured(client):
+    """Unavailable is not an error: the UI falls back and says why.
+
+    Returning 500 here would take the whole voice panel down for a condition the
+    user can fix, and would leave batch transcription unreachable.
+    """
+    _sign_in(client)
+    response = client.post("/api/voice/stt-token")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["reason"]

@@ -35,6 +35,8 @@ from ..services.narration import Priority
 from ..services.elevenlabs import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
+    REALTIME_STT_MODEL,
+    REALTIME_STT_URL,
     ElevenLabsError,
 )
 
@@ -107,6 +109,49 @@ async def _state_payload(container: ContainerDep) -> dict[str, Any]:
 async def voice_state(container: ContainerDep, _: CurrentUser) -> dict[str, Any]:
     """What the voice channel is doing, and what it recently said."""
     return await _state_payload(container)
+
+
+@router.post("/stt-token", response_model=dict)
+async def stt_token(
+    container: ContainerDep, _: CurrentUser
+) -> dict[str, Any]:
+    """Mint a single-use token for browser-side realtime transcription.
+
+    The ElevenLabs API key never leaves the server; the browser receives a token
+    scoped to one Realtime Speech-to-Text session. Returns ``available: false``
+    with a readable reason instead of failing, so the UI can fall back to the
+    batch transcriber and say why.
+    """
+    try:
+        config = await container.settings_service.voice_config()
+    except Exception as exc:  # noqa: BLE001 - report, never break the panel
+        logger.warning("realtime voice unavailable: %s", exc)
+        return {"available": False, "reason": str(exc), "token": None}
+
+    if config is None:
+        return {
+            "available": False,
+            "reason": (
+                "No ElevenLabs key is configured, so realtime voice needs setup "
+                "in Settings \u203a Voice."
+            ),
+            "token": None,
+        }
+
+    try:
+        token = await config.client.create_realtime_token()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not mint a realtime token: %s", exc)
+        return {"available": False, "reason": str(exc), "token": None}
+
+    return {
+        "available": True,
+        "reason": None,
+        "token": token,
+        # The browser needs these to open the socket; neither is a secret.
+        "model_id": REALTIME_STT_MODEL,
+        "url": REALTIME_STT_URL,
+    }
 
 
 class SayRequest(BaseModel):

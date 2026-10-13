@@ -42,7 +42,7 @@ from .checks import ChecksService
 from .context import build_snapshot, offline_answer
 from .event_bus import EventBus
 from .intent import IntentRouter
-from .milestones import MilestoneService
+from .milestones import MilestoneService, MilestoneStage, MilestoneStatus
 from .narration import NarrationService, Priority
 from .orchestration_state import OrchestrationState, PlannedTask
 from .orchestrator_brain import IntentDecision, OrchestratorBrain
@@ -54,6 +54,18 @@ logger = logging.getLogger(__name__)
 
 class TaskConflictError(RuntimeError):
     """Raised when a second modifying task is requested for a busy project."""
+
+
+def _milestone_field(milestone: Any, name: str, default: Any = None) -> Any:
+    """Read one field from a milestone that may be a dataclass or a dict.
+
+    ``MilestoneTracker.observe`` returns a dataclass while ``MilestoneService``
+    hands the same transition on as a serialised dict, so narration accepts both
+    rather than forcing one shape on the other.
+    """
+    if isinstance(milestone, dict):
+        return milestone.get(name, default)
+    return getattr(milestone, name, default)
 
 
 def _short(text: str, limit: int = 80) -> str:
@@ -1020,6 +1032,101 @@ class OrchestratorService:
         )
         if changed is not None:
             await self._persist_milestones(project_id)
+            await self._narrate_milestone(
+                changed,
+                task_id=task_id,
+                project_id=project_id,
+                instruction=instruction,
+            )
+
+    #: Deterministic phrasing per stage. Used when the Orchestrator model is
+    #: unavailable, so a milestone is still explained in plain language instead of
+    #: the voice channel simply going quiet.
+    _MILESTONE_PHRASES: dict[str, str] = {
+        MilestoneStage.UNDERSTANDING.value: "I've read the request and I know what to build.",
+        MilestoneStage.PLANNING.value: "I've worked out the steps I'll take.",
+        MilestoneStage.IMPLEMENTING.value: "I'm making the changes now.",
+        MilestoneStage.VERIFYING.value: "The changes are in, so I'm checking they work.",
+        MilestoneStage.COMPLETED.value: "That's finished.",
+        MilestoneStage.BLOCKED.value: "I've hit something I can't get past.",
+        MilestoneStage.CANCELLED.value: "I've stopped work on this.",
+    }
+
+    async def _narrate_milestone(
+        self,
+        milestone: Any,
+        *,
+        task_id: str | None,
+        project_id: str | None,
+        instruction: str | None,
+    ) -> None:
+        """Speak a milestone transition as it happens.
+
+        Deliberately separate from :meth:`_narrate`: that method forwards raw
+        event text, which is written to be read in a log. A milestone is the
+        moment actually worth saying aloud, so it is phrased for speech here.
+        """
+        if self._narration is None:
+            return
+        text = await self._milestone_sentence(milestone, instruction=instruction)
+        if not text:
+            return
+
+        stage = str(_milestone_field(milestone, "stage", ""))
+        status = str(_milestone_field(milestone, "status", ""))
+        # A blocked task needs the user's attention, so it is as urgent to say
+        # aloud as a failure. Completion is worth the calmer summary priority.
+        failed = status == MilestoneStatus.FAILED.value or stage == MilestoneStage.BLOCKED.value
+        done = stage in {
+            MilestoneStage.COMPLETED.value,
+            MilestoneStage.CANCELLED.value,
+        }
+        priority = (
+            int(Priority.CRITICAL)
+            if failed
+            else int(Priority.IMPORTANT)
+            if done
+            else int(Priority.PROGRESS)
+        )
+        await self._narration.announce(
+            text,
+            kind="milestone",
+            priority=priority,
+            task_id=task_id,
+            project_id=project_id,
+        )
+
+    async def _milestone_sentence(
+        self, milestone: Any, *, instruction: str | None
+    ) -> str | None:
+        """Phrase one milestone for speech, without inventing progress.
+
+        The transition has already happened and was justified by evidence; the
+        model may only *reword* it. If the model is unavailable or fails, the
+        deterministic phrasing is used, because a milestone that really occurred
+        should still be spoken rather than silently dropped.
+        """
+        stage = str(_milestone_field(milestone, "stage", ""))
+        title = str(_milestone_field(milestone, "title", "") or "")
+        described: str | None = None
+        if self._brain is not None:
+            try:
+                described = await self._brain.describe_milestone(
+                    stage=stage,
+                    title=title,
+                    evidence=list(_milestone_field(milestone, "evidence", []) or []),
+                    instruction=instruction,
+                )
+            except Exception:  # noqa: BLE001 - narration must never break a task
+                logger.warning("milestone description failed", exc_info=True)
+        if described and described.strip():
+            return described.strip()
+
+        phrase = self._MILESTONE_PHRASES.get(stage)
+        cleaned = title.strip().rstrip(".")
+        if phrase and cleaned:
+            return f"{phrase} {cleaned}."
+        return phrase or cleaned or None
 
     async def _persist_milestones(self, project_id: str | None) -> None:
         """Write the milestone snapshot into the project store.

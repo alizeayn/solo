@@ -15,7 +15,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api/client'
 import { useWorkspace } from '../state/WorkspaceProvider'
-import type { ConnectionTestResult, OpenRouterModel, OrchestratorStatus } from '../types'
+import type {
+  ConnectionTestResult,
+  OpenRouterModel,
+  OrchestratorProvider,
+  OrchestratorStatus,
+} from '../types'
 
 const MAX_RENDERED = 60
 
@@ -23,6 +28,8 @@ export default function OrchestratorSettings() {
   const { settings, refreshSettings, reportError } = useWorkspace()
 
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
+  const [providers, setProviders] = useState<OrchestratorProvider[]>([])
+  const [provider, setProvider] = useState('openrouter')
   const [models, setModels] = useState<OpenRouterModel[]>([])
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
@@ -36,17 +43,40 @@ export default function OrchestratorSettings() {
     try {
       const data = await api.orchestrator.status()
       setStatus(data)
-      setModel((current) => current || data.model || '')
+      setProvider(data.provider)
+      // The model belongs to the provider, so the field follows it rather than
+      // keeping a stale id from whichever provider was selected before.
+      setModel(data.model ?? '')
+      setModels([])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [])
 
+  const loadProviders = useCallback(async () => {
+    try {
+      setProviders(await api.orchestrator.providers())
+    } catch {
+      /* the selector falls back to the active provider alone */
+    }
+  }, [])
+
   useEffect(() => {
     void loadStatus()
-  }, [loadStatus])
+    void loadProviders()
+  }, [loadStatus, loadProviders])
 
-  const hasStoredKey = settings?.openrouter_api_key.configured ?? false
+  // Every provider-specific detail comes from this one object, so adding a third
+  // provider is a backend change and not a change here.
+  const active =
+    providers.find((item) => item.id === provider) ??
+    providers.find((item) => item.id === status?.provider) ??
+    null
+  const keySetting = active?.key_setting ?? 'openrouter_api_key'
+  const configuredBySettings = (settings as unknown as Record<string, { configured?: boolean }> | null)?.[
+    keySetting
+  ]?.configured
+  const hasStoredKey = configuredBySettings ?? active?.has_key ?? false
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -72,10 +102,24 @@ export default function OrchestratorSettings() {
     }
   }
 
+  const chooseProvider = (next: string) =>
+    guarded('provider', async () => {
+      // Persist first: the model list and the key field both belong to whichever
+      // provider is active, so switching before reloading would show the previous
+      // provider's models under the new provider's name.
+      setProvider(next)
+      setModel('')
+      setModels([])
+      setResult(null)
+      await api.orchestrator.config({ provider: next })
+      await loadStatus()
+      await loadProviders()
+    })
+
   const saveKey = () =>
     guarded('key', async () => {
       if (!apiKey.trim()) return
-      await api.settings.update({ openrouter_api_key: apiKey.trim() })
+      await api.settings.update({ [keySetting]: apiKey.trim() })
       setApiKey('')
       await refreshSettings()
       await loadStatus()
@@ -85,7 +129,7 @@ export default function OrchestratorSettings() {
 
   const removeKey = () =>
     guarded('key', async () => {
-      await api.settings.removeSecret('openrouter_api_key')
+      await api.settings.removeSecret(keySetting)
       await refreshSettings()
       await loadStatus()
       setModels([])
@@ -141,8 +185,46 @@ export default function OrchestratorSettings() {
     <div className="settings-pane">
       <section className="settings-section">
         <div className="settings-section__head">
-          <h3 className="settings-section__title">OpenRouter</h3>
+          <h3 className="settings-section__title">
+            {active?.label ?? status?.provider_label ?? 'Orchestrator model provider'}
+          </h3>
           <StatePill state={state} />
+        </div>
+
+        {/* The provider is a choice, not a build-time decision. Switching it
+            re-reads the key field, the model list and the status, because all
+            three belong to whichever provider is active. */}
+        <div className="settings-grid">
+          <div className="field">
+            <label htmlFor="or-provider">Provider</label>
+            <select
+              id="or-provider"
+              className="input"
+              value={provider}
+              disabled={busy !== null}
+              onChange={(event) => void chooseProvider(event.target.value)}
+            >
+              {(providers.length > 0
+                ? providers
+                : [{ id: provider, label: active?.label ?? provider } as OrchestratorProvider]
+              ).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                  {item.configured ? ' ✓' : item.has_key ? '' : ' — needs a key'}
+                </option>
+              ))}
+            </select>
+            {active && (
+              <span className="hint">
+                {active.notes}{' '}
+                {active.documentation && (
+                  <a href={active.documentation} target="_blank" rel="noreferrer">
+                    Documentation
+                  </a>
+                )}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="settings-grid">
@@ -158,7 +240,13 @@ export default function OrchestratorSettings() {
               className="input"
               type="password"
               autoComplete="off"
-              placeholder={hasStoredKey ? 'Replace the saved key' : 'sk-or-v1-…'}
+              placeholder={
+                hasStoredKey
+                  ? 'Replace the saved key'
+                  : active?.id === 'openrouter'
+                    ? 'sk-or-v1-…'
+                    : 'Paste your API key'
+              }
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
             />

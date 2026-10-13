@@ -32,6 +32,7 @@ import type {
   MessageDispatchResult,
   OpenRouterModel,
   OrchestrationView,
+  OrchestratorProvider,
   OrchestratorStatus,
   PiAuthStatus,
   PiModel,
@@ -341,7 +342,9 @@ export const api = {
 
   orchestrator: {
     status: () => request<OrchestratorStatus>('/api/orchestrator/status'),
-    config: (patch: { model?: string; enabled?: boolean }) =>
+    /** Every provider the Orchestrator supports, with per-provider readiness. */
+    providers: () => request<OrchestratorProvider[]>('/api/orchestrator/providers'),
+    config: (patch: { model?: string; enabled?: boolean; provider?: string }) =>
       request<OrchestratorStatus>('/api/orchestrator/config', {
         method: 'PUT',
         body: JSON.stringify(patch),

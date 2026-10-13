@@ -211,12 +211,33 @@ export interface OrchestratorStatus {
   configured: boolean
   has_key: boolean
   model: string | null
+  /** Which provider the Orchestrator reasons with. */
+  provider: string
+  provider_label: string
+  base_url: string | null
   key_masked: string | null
   call_count: number
   failure_count: number
   last_error: string | null
   last_latency_ms: number | null
   last_model: string | null
+}
+
+/** One model provider the Orchestrator can use, and whether it is ready. */
+export interface OrchestratorProvider {
+  id: string
+  label: string
+  key_setting: string
+  model_setting: string
+  base_url: string
+  documentation: string
+  key_url: string
+  notes: string
+  requires_session_header: boolean
+  configured: boolean
+  has_key: boolean
+  model: string | null
+  key_masked: string | null
 }
 
 export interface OpenRouterModel {

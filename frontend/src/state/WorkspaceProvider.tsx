@@ -239,8 +239,7 @@ export function WorkspaceProvider({
     }
   }, [selectedTaskId, handleFailure])
 
-  const handleEnvelope = useCallback((envelope: WsEnvelope) => {
-    if (envelope.channel === 'task') {
+  const handleEnvelope = useCallback((envelope: WsEnvelope) => {    if (envelope.channel === 'task') {
       const task = envelope.payload as unknown as Task
       if (task.project_id === projectIdRef.current) {
         setTasks((previous) => upsertTask(previous, task))
@@ -294,6 +293,54 @@ export function WorkspaceProvider({
   }, [])
 
   const connection = useWebSocket(handleEnvelope, true)
+
+  // Recover what the stream dropped.
+  //
+  // A WebSocket delivers only what happens while it is open. Reconnecting does
+  // not replay the gap, so a task that advanced during a drop left every panel
+  // showing stale state until a manual reload — which is what made a dropped
+  // connection look like a broken workspace rather than a brief interruption.
+  // Refetching on reopen makes the drop self-healing.
+  const previousConnectionRef = useRef<ConnectionState>('closed')
+  const hasConnectedRef = useRef(false)
+
+  useEffect(() => {
+    const previous = previousConnectionRef.current
+    previousConnectionRef.current = connection
+    if (connection !== 'open' || previous === 'open') return
+
+    // The first connect is already covered by the initial loads; only a
+    // *re*connect has a gap to fill.
+    if (!hasConnectedRef.current) {
+      hasConnectedRef.current = true
+      return
+    }
+
+    let cancelled = false
+    const resync = async () => {
+      if (!projectId) return
+      try {
+        const [taskList, messageList] = await Promise.all([
+          api.tasks.list(projectId),
+          api.messages.list(projectId),
+        ])
+        if (cancelled) return
+        setTasks(taskList)
+        setMessages(messageList)
+        const taskId = selectedTaskIdRef.current
+        if (taskId) {
+          const eventList = await api.tasks.events(taskId)
+          if (!cancelled) setEvents(eventList)
+        }
+      } catch (cause) {
+        if (!cancelled) handleFailure(cause)
+      }
+    }
+    void resync()
+    return () => {
+      cancelled = true
+    }
+  }, [connection, projectId, handleFailure])
 
   const selectProject = useCallback((nextId: string | null) => {
     setProjectId(nextId)

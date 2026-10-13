@@ -22,6 +22,9 @@ vi.mock('../api/client', () => ({
       remove: vi.fn(),
       advance: vi.fn(),
     },
+    orchestrator: {
+      status: vi.fn(),
+    },
   },
 }))
 
@@ -29,6 +32,9 @@ import { api } from '../api/client'
 import OrchestrationPanel from './OrchestrationPanel'
 
 const orchestration = api.orchestration
+const orchestratorStatus = (api as unknown as {
+  orchestrator: { status: ReturnType<typeof vi.fn> }
+}).orchestrator.status
 
 function view(queue: object[], notes: object[] = []) {
   return {
@@ -73,6 +79,7 @@ const QUEUE = [
 
 describe('OrchestrationPanel', () => {
   beforeEach(() => {
+    orchestratorStatus.mockResolvedValue({ call_count: 3, failure_count: 0, last_error: null })
     mocks.orchestration = null
     vi.mocked(orchestration.get).mockReset().mockResolvedValue(view([]) as never)
     vi.mocked(orchestration.skip).mockReset()
@@ -179,5 +186,32 @@ describe('OrchestrationPanel', () => {
     expect(screen.getByText(/1 not yet applied/i)).toBeInTheDocument()
     expect(screen.getByText('applied · steered')).toBeInTheDocument()
     expect(screen.getAllByText('pending').length).toBeGreaterThan(0)
+  })
+})
+
+describe('OrchestrationPanel degradation', () => {
+  it('reports a failing Orchestrator instead of silently falling back', async () => {
+    vi.mocked(orchestration.get).mockResolvedValue(view(QUEUE) as never)
+    orchestratorStatus.mockResolvedValue({
+      call_count: 3,
+      failure_count: 3,
+      last_error: 'Rate limit exceeded: free-models-per-day.',
+    })
+
+    render(<OrchestrationPanel projectId="p1" />)
+
+    // The fallback is by design, but the user must be told it is in effect.
+    expect(await screen.findByText(/using deterministic rules/i)).toBeInTheDocument()
+    expect(screen.getByText(/Rate limit exceeded/i)).toBeInTheDocument()
+  })
+
+  it('stays quiet when the Orchestrator is healthy', async () => {
+    vi.mocked(orchestration.get).mockResolvedValue(view(QUEUE) as never)
+    orchestratorStatus.mockResolvedValue({ call_count: 3, failure_count: 0, last_error: null })
+
+    render(<OrchestrationPanel projectId="p1" />)
+
+    await waitFor(() => expect(orchestration.get).toHaveBeenCalled())
+    expect(screen.queryByText(/using deterministic rules/i)).toBeNull()
   })
 })

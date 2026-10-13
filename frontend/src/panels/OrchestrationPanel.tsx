@@ -31,12 +31,26 @@ export default function OrchestrationPanel({ projectId }: { projectId: string })
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // When the Orchestrator model cannot be reached -- a rate limit, a quota, a
+  // bad key -- Solo falls back to deterministic rules. That fallback is by
+  // design, but staying quiet about it makes a limited account look like a
+  // working one, which is how an exhausted free tier goes unnoticed.
+  const [degraded, setDegraded] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
       setView(await api.orchestration.get(projectId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+    }
+    try {
+      const status = await api.orchestrator.status()
+      setDegraded(
+        status.failure_count > 0 && status.last_error ? status.last_error : null,
+      )
+    } catch {
+      // Status is advisory; never let it break the panel.
+      setDegraded(null)
     }
   }, [projectId])
 
@@ -110,6 +124,16 @@ export default function OrchestrationPanel({ projectId }: { projectId: string })
 
       {error && <div className="alert alert--error">{error}</div>}
       {notice && !error && <div className="alert alert--info">{notice}</div>}
+      {/* Reported rather than swallowed: Solo keeps working on deterministic
+          rules, and the user is told why the model's help is missing. */}
+      {degraded && !error && (
+        <div className="alert alert--warn">
+          Orchestrator model unavailable, so Solo is using deterministic rules and
+          snapshot answers. Tasks are unaffected.
+          <br />
+          <span className="mono">{degraded}</span>
+        </div>
+      )}
 
       {queue.length === 0 ? (
         <div className="empty">

@@ -578,8 +578,20 @@ export interface VoiceState {
   voice_enabled?: boolean
   speech_enabled?: boolean
   phase?: string
-  /** True when a key is saved, whether or not a voice is usable yet. */
+  /** True when a key, model and voice are saved, whether or not they work. */
   configured?: boolean
+  /**
+   * True when a key, model and voice are saved. Distinguishes "not set up"
+   * from "set up but failing", which `audio_available` alone cannot.
+   */
+  voice_configured?: boolean
+  /**
+   * Why the most recent speech attempt failed, if it did. Present means voice
+   * output is not working, whatever the configuration says.
+   */
+  audio_error?: { message: string; text?: string; at?: string } | null
+  /** Count of speech attempts that produced no audio. */
+  speech_failures?: number
   model_id?: string
   voice_id?: string | null
   voice_name?: string | null

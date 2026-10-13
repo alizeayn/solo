@@ -161,6 +161,34 @@ describe('VoiceChannel', () => {
     expect(await screen.findByText(/voice id is required/i)).toBeInTheDocument()
   })
 
+  it('says voice output is broken when a configured account still fails', async () => {
+    // The account is fully configured, so nothing looks wrong -- but every
+    // synthesis attempt failed. Saying nothing here is what made a dead
+    // integration look healthy.
+    mocks.voiceState = {
+      ...CONFIGURED,
+      audio_available: false,
+      configured: true,
+      voice_configured: true,
+      phase: 'narration-only',
+      speech_failures: 3,
+      audio_error: { message: 'This request exceeds your quota of 10000.' },
+    }
+    render(<VoiceChannel />)
+
+    expect(await screen.findByText(/voice output is not working/i)).toBeInTheDocument()
+    expect(screen.getByText(/exceeds your quota of 10000/i)).toBeInTheDocument()
+    // The user is told text still works, so the failure is not alarming.
+    expect(screen.getByText(/still shown here as text/i)).toBeInTheDocument()
+  })
+
+  it('does not cry wolf when speech is working', async () => {
+    mocks.voiceState = { ...CONFIGURED, audio_error: null, speech_failures: 0 }
+    render(<VoiceChannel />)
+    await screen.findByRole('button', { name: /Voice off/i })
+    expect(screen.queryByText(/voice output is not working/i)).not.toBeInTheDocument()
+  })
+
   it('shows the voice output toggle when audio is available', async () => {
     render(<VoiceChannel />)
     expect(await screen.findByRole('button', { name: /Voice off/i })).toBeInTheDocument()

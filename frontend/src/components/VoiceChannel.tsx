@@ -202,10 +202,20 @@ export default function VoiceChannel() {
         )}
       </div>
 
-      {(sessionError || state?.needs_voice || notice) && (
+      {(sessionError || state?.needs_voice || state?.audio_error || notice) && (
         <div className="voice-panel__feedback">
           {sessionError && <div className="alert alert--error">{sessionError}</div>}
-          {!sessionError && state?.needs_voice && (
+          {/* Speech failing is reported even when the configuration looks
+              complete: an account can be fully configured and still silent. */}
+          {!sessionError && state?.audio_error && (
+            <div className="alert alert--warn">
+              <strong>Voice output is not working.</strong>{' '}
+              {state.audio_error.message}
+              <br />
+              Progress is still shown here as text, and tasks are unaffected.
+            </div>
+          )}
+          {!sessionError && !state?.audio_error && state?.needs_voice && (
             <div className="alert alert--warn">
               A voice id is required for speech output. This key cannot list voices,
               so set one in Settings → Voice.

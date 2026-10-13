@@ -60,6 +60,16 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
 | 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
 
+### Project status — as at 2.6.1
+
+| # | Stage | Document |
+|---|---|---|
+| 93 | Status report | [project-status-0093.md](06-summary/project-status-0093.md) |
+
+A full assessment of everything built to date measured against the MVP
+specification: what works, what does not, what is deferred, and the distance to
+the goal. Read this first if you are new to the project.
+
 ### Phase 2.13 — 2.6.1: OpenCode Go as a second Orchestrator provider
 
 | # | Stage | Document |

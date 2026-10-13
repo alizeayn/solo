@@ -146,6 +146,9 @@ class CheckOutcome(str, Enum):
 SECRET_SETTING_KEYS: frozenset[str] = frozenset(
     {
         "openrouter_api_key",
+        # The Orchestrator's second provider. Stored encrypted like the first:
+        # which provider is active must not change how well a key is protected.
+        "opencode_go_api_key",
         "elevenlabs_api_key",
     }
 )
@@ -153,6 +156,9 @@ SECRET_SETTING_KEYS: frozenset[str] = frozenset(
 PLAIN_SETTING_KEYS: frozenset[str] = frozenset(
     {
         "openrouter_model",
+        "opencode_go_model",
+        # Which provider the Orchestrator reasons with.
+        "orchestrator_provider",
         "elevenlabs_agent_id",
         "elevenlabs_tts_voice_id",
         "elevenlabs_model_id",

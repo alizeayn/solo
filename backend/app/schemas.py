@@ -77,6 +77,11 @@ class SettingsOut(BaseModel):
     openrouter_api_key: SecretStatus
     elevenlabs_api_key: SecretStatus
     openrouter_model: str | None = None
+    #: OpenCode Go credentials and model, alongside OpenRouter's.
+    opencode_go_api_key: SecretStatus | None = None
+    opencode_go_model: str | None = None
+    #: Active Orchestrator provider id.
+    orchestrator_provider: str | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_tts_voice_id: str | None = None
     #: Text-to-speech model id (e.g. ``eleven_flash_v2_5``).
@@ -105,8 +110,13 @@ class SettingsUpdate(BaseModel):
     """Partial update. ``None`` means "leave unchanged"; empty string clears."""
 
     openrouter_api_key: str | None = None
+    opencode_go_api_key: str | None = None
     elevenlabs_api_key: str | None = None
     openrouter_model: str | None = None
+    #: OpenCode Go credentials and model, alongside OpenRouter's.
+    opencode_go_model: str | None = None
+    #: Which provider the Orchestrator reasons with.
+    orchestrator_provider: str | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_tts_voice_id: str | None = None
     elevenlabs_model_id: str | None = None
@@ -237,6 +247,11 @@ class OrchestratorStatusOut(BaseModel):
     configured: bool = False
     has_key: bool = False
     model: str | None = None
+    #: Which provider the Orchestrator reasons with. Always reported, so the UI
+    #: never has to assume OpenRouter.
+    provider: str = "openrouter"
+    provider_label: str = "OpenRouter"
+    base_url: str | None = None
     key_masked: str | None = None
     call_count: int = 0
     failure_count: int = 0
@@ -248,6 +263,32 @@ class OrchestratorStatusOut(BaseModel):
 class OrchestratorConfigIn(BaseModel):
     model: str | None = None
     enabled: bool | None = None
+    #: Switch providers. The model is per-provider, so changing provider without
+    #: changing the model would apply OpenRouter's model id to OpenCode Go.
+    provider: str | None = None
+
+
+class OrchestratorProviderOut(BaseModel):
+    """One provider the Orchestrator can use, and whether it is ready.
+
+    ``configured`` is per provider, so the settings UI can show that OpenRouter
+    is ready while OpenCode Go still needs a key, without pretending either is
+    broken.
+    """
+
+    id: str
+    label: str
+    key_setting: str
+    model_setting: str
+    base_url: str
+    documentation: str = ""
+    key_url: str = ""
+    notes: str = ""
+    requires_session_header: bool = False
+    configured: bool = False
+    has_key: bool = False
+    model: str | None = None
+    key_masked: str | None = None
 
 
 class OpenRouterModelOut(BaseModel):

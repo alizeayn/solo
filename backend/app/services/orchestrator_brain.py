@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -30,6 +31,11 @@ from pydantic import BaseModel, Field, ValidationError
 from ..config import Settings
 from ..domain import Intent
 from .openrouter import OpenRouterClient, OpenRouterError
+from .orchestrator_providers import (
+    ProviderSpec,
+    build_headers,
+    get_provider,
+)
 from .orchestration_state import PlannedTask
 
 logger = logging.getLogger(__name__)
@@ -198,6 +204,10 @@ class OrchestratorBrain:
         self._settings = settings
         self._settings_service = settings_service
         self._client_factory = client_factory
+        # Stable for the life of the process. OpenCode Go routes and caches on
+        # this id and rejects a request without one, so it is created once here
+        # rather than per call.
+        self.session_id = uuid.uuid4().hex
         self.last_error: str | None = None
         self.last_latency_ms: int | None = None
         self.last_model: str | None = None
@@ -232,18 +242,43 @@ class OrchestratorBrain:
         """
         if self._settings_service is None:
             return (self._client_factory is not None, None)
-        key = await self._settings_service.get_secret("openrouter_api_key")
-        model = await self._settings_service.get_plain("openrouter_model")
+        spec = await self.active_provider()
+        key = await self._settings_service.get_secret(spec.key_setting)
+        model = await self._settings_service.get_plain(spec.model_setting)
         return (bool(key), model)
+
+    async def active_provider(self) -> ProviderSpec:
+        """The provider the Orchestrator is configured to use.
+
+        An unknown or removed id falls back to the default rather than raising:
+        a stale setting must not leave the Orchestrator unreachable from the UI
+        that would fix it.
+        """
+        if self._settings_service is None:
+            return get_provider(None)
+        saved = await self._settings_service.get_plain("orchestrator_provider")
+        return get_provider(saved)
+
+    async def _base_url(self, spec: ProviderSpec) -> str:
+        """The provider's endpoint, honouring an override when one is set."""
+        if spec.base_url_setting is not None:
+            override = getattr(self._settings, spec.base_url_setting, None)
+            if isinstance(override, str) and override.strip():
+                return override.strip()
+        return spec.default_base_url
 
     async def configuration(self) -> dict[str, Any]:
         """Current orchestrator configuration, without exposing the key."""
         has_key, model = await self._settings_view()
+        spec = await self.active_provider()
         return {
             "enabled": await self.is_enabled(),
             "configured": bool(has_key and (model or self._client_factory is not None)),
             "has_key": has_key,
             "model": model,
+            "provider": spec.id,
+            "provider_label": spec.label,
+            "base_url": await self._base_url(spec),
             "call_count": self.call_count,
             "failure_count": self.failure_count,
             "last_error": self.last_error,
@@ -272,15 +307,17 @@ class OrchestratorBrain:
             return client, model
         if self._settings_service is None:
             return None
-        key = await self._settings_service.get_secret("openrouter_api_key")
+        spec = await self.active_provider()
+        key = await self._settings_service.get_secret(spec.key_setting)
         if not key:
             return None
-        model = await self._settings_service.get_plain("openrouter_model")
+        model = await self._settings_service.get_plain(spec.model_setting)
         return (
             OpenRouterClient(
                 key,
-                base_url=self._settings.openrouter_base_url,
+                base_url=await self._base_url(spec),
                 timeout=self._settings.orchestrator_timeout_seconds,
+                extra_headers=build_headers(spec, self.session_id),
             ),
             model,
         )

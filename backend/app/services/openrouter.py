@@ -20,6 +20,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_TIMEOUT = 60.0
 #: Hard cap so a runaway model cannot flood the orchestrator.
@@ -27,12 +28,23 @@ MAX_COMPLETION_TOKENS = 2048
 
 
 class OpenRouterError(RuntimeError):
-    """Any failure talking to OpenRouter, with a user-facing message."""
+    """Any failure talking to the Orchestrator's model provider.
+
+    Named for OpenRouter because that was the only provider, but the class is
+    shared: OpenCode Go reports its failures through the same type, so callers
+    never branch on which provider is configured.
+    """
 
     def __init__(self, message: str, *, status: int | None = None, detail: str | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+
+
+#: The same error type under a provider-neutral name, for new code. Aliased
+#: rather than duplicated so `except OpenRouterError` and `except ProviderError`
+#: cannot diverge.
+ProviderError = OpenRouterError
 
 
 @dataclass
@@ -80,6 +92,7 @@ class OpenRouterClient:
         timeout: float = DEFAULT_TIMEOUT,
         referer: str = "http://localhost",
         title: str = "Solo",
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -91,6 +104,11 @@ class OpenRouterClient:
             "HTTP-Referer": referer,
             "X-Title": title,
         }
+        # Provider-specific requirements. OpenCode Go, for one, rejects a request
+        # that carries no session id with a 400 rather than routing it badly, so
+        # these cannot be optional decoration.
+        if extra_headers:
+            self._headers.update(extra_headers)
 
     # ------------------------------------------------------------------ #
     # Discovery / validation

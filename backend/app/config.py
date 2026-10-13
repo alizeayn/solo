@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     orchestrator_enabled: bool = True
     orchestrator_timeout_seconds: float = 45.0
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    #: OpenCode Go serves an OpenAI-compatible API at this prefix. The models
+    #: endpoint there is public; inference needs a key and a session header.
+    opencode_go_base_url: str = "https://opencode.ai/inference/go/v1"
 
     # --- Voice (ElevenLabs) ---
     # Text to speech for narration and speech to text for input. The

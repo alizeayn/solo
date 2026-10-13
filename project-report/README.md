@@ -5,10 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ · **2.6 (live voice, session)** ✅ · **2.7 (2.5.1)** ✅ · **2.8 (2.5.2)** ✅ · **2.9 (2.5.3)** ✅ · **2.10 (2.5.4)** ✅ |
-| **Last updated** | 2026-10-13 (2.5.4) |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ · **2.6 (live voice, session)** ✅ · **2.7 (2.5.1)** ✅ · **2.8 (2.5.2)** ✅ · **2.9 (2.5.3)** ✅ · **2.10 (2.5.4)** ✅ · **2.11 (2.5.5)** ✅ |
+| **Last updated** | 2026-10-13 (2.5.5) |
 | **Automated checks** | **665 passing** — 458 backend, 131 frontend, + 23 live voice, + 76 simulator e2e |
-| **Defects** | 61 found, 57 fixed with regression coverage, 4 open (D-08 Docker, D-49 answer rows, mobile UI, ElevenLabs key balance) |
+| **Defects** | 65 found, 61 fixed with regression coverage, 4 open (D-08 Docker, D-49 answer rows, mobile UI, ElevenLabs key balance) |
 
 ---
 
@@ -59,6 +59,17 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 30 | Defects | [defect-log-0030.md](04-defects/defect-log-0030.md) |
 | 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
 | 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
+
+### Phase 2.11 — 2.5.5: voice-first conversation
+
+| # | Stage | Document |
+|---|---|---|
+| 75 | Planning | [voice-first-conversation-0075.md](01-planning/voice-first-conversation-0075.md) |
+| 76 | Implementation | [voice-first-conversation-0076.md](02-implementation/voice-first-conversation-0076.md) |
+| 77 | Testing | [voice-first-conversation-0077.md](03-testing/voice-first-conversation-0077.md) |
+| 78 | Defects | [defect-log-0078.md](04-defects/defect-log-0078.md) |
+| 79 | Verification | [acceptance-criteria-0079.md](05-verification/acceptance-criteria-0079.md) |
+| 80 | Summary | [summary-0080.md](06-summary/summary-0080.md) |
 
 ### Phase 2.10 — 2.5.4: narration delivery, mobile and visible degradation
 
@@ -173,6 +184,7 @@ project-report/
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
 | 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
+| 2.11 | 2026-10-13 | **2.5.5.** Made the voice exchange conversational. The agent only spoke on milestones, so a session opened in **silence**, a request produced **no spoken acknowledgement**, and file changes were **inaudible** — one-sided, because `_narrate` forwarded only `progress.summary` and `error`. `assistant.message` and `file.changed` are now narrated, the acknowledgement is rewritten for speech (`"Got it. I'll get started on this: create a login page."`) at IMPORTANT priority so it is never superseded or dropped mid-utterance, and file changes are phrased by verb (created/updated/removed) and coalesce under load. A session now opens with a contextual greeting through **`POST /api/voice/say`** — the same narration pipeline, not a second mechanism. Steering and per-project context already existed and needed no change. **Not verified by ear:** the ElevenLabs balance is exhausted again (10000/10000). | 468 BE · 150 FE | D-62…D-65 |
 | 2.10 | 2026-10-13 | **2.5.4.** Found the reason audio was generated and never heard. The mobile log showed **24 successful TTS calls and 0 requests for `/api/voice/audio`**. A narration line is published **twice under one id** (queued `spoken:false`, then delivered `spoken:true`) and the provider merged narration with `appendUnique`, which **discards an id it has already seen** — so the delivered message was thrown away, every line stayed unspoken, and the player (which only plays lines with audio) fetched nothing. The milestone channel in the same handler used an upsert with a comment describing exactly this case. Fixed with `upsertNarration`, proven on the wire and covered by a test that fails on the old code. Also: narration missed during a disconnect is now recovered, and a rate-limited Orchestrator is reported in the workspace tile with the provider's own message. **Not verified:** hearing it — needs a browser and a funded key. | 147 FE | D-59…D-61 |
 | 2.9 | 2026-10-13 | **2.5.3.** Credit was consumed but nothing was heard. The provider log showed **82 requests, all HTTP 200, 13 successful TTS calls**; Solo's log showed `/api/voice/audio` requested **zero times**. Playback defaulted to **off**, so Solo synthesised, paid and stored audio the client never fetched. Now on by default and persisted; an autoplay refusal is recovered on the next gesture and shown as `tap anywhere to enable sound`. Two further bugs surfaced: a refused line was marked *seen* and could never play, and the audio element was created in an effect declared *after* the code that needed it. The perceived connection drops were 30-of-32 explained by restarts/page loads; the real defect was that nothing refetched after a drop — `WorkspaceProvider` now resyncs on reconnect. **Not verified:** hearing a milestone — the stored key reports 0 credits. | 139 FE | D-55…D-58 |
 | 2.8 | 2026-10-13 | **2.5.2.** Fixed the voice pipeline. The ElevenLabs account has **0 credits** (`401 quota_exceeded`) — an account state, not a bug — but Solo **hid the failure at four points**: the transport swallowed every synthesis error and returned normally, `audio_available` was an OR of "configured" and "working", the transport flag meant "has delivered once", and failed lines were counted as *spoken*. All four now report the truth, with the real API message reaching the UI. **Milestones had never been sent to the voice channel at all** (`_narrate` allowed only progress/error); they are now spoken with natural phrasing, rewordable by the model and never invented. Narration stays **text-first**, so a typed task still produces a conversational account of the work with no audio. Not verified: hearing real speech — impossible at 0 credits. | 465 BE · 133 FE | D-51…D-54 |

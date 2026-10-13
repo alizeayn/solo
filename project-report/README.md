@@ -5,10 +5,10 @@ Engineering report for the **Solo** voice-first AI workspace.
 | | |
 |---|---|
 | **Project** | Solo (`alizeayn/solo`) |
-| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ · **2.6 (live voice, session)** ✅ · **2.7 (2.5.1)** ✅ · **2.8 (2.5.2)** ✅ · **2.9 (2.5.3)** ✅ · **2.10 (2.5.4)** ✅ · **2.11 (2.5.5)** ✅ · **2.12 (2.6.0)** ✅ |
-| **Last updated** | 2026-10-13 (2.6.0) |
+| **Phase** | 1 ✅ · 1.5 (project model) ✅ · 2 (Pi Agent, Orchestrator) ✅ · 2.2 (isolated runtime, updates) ✅ · 2.3 (voice foundation, theme, accounts) ✅ · 2.4 (Orchestrator config, tiles, milestones) ✅ · **2.5 (voice activation)** ✅ · **2.6 (live voice, session)** ✅ · **2.7 (2.5.1)** ✅ · **2.8 (2.5.2)** ✅ · **2.9 (2.5.3)** ✅ · **2.10 (2.5.4)** ✅ · **2.11 (2.5.5)** ✅ · **2.12 (2.6.0)** ✅ · **2.13 (2.6.1)** ✅ |
+| **Last updated** | 2026-10-13 (2.6.1) |
 | **Automated checks** | **665 passing** — 458 backend, 131 frontend, + 23 live voice, + 76 simulator e2e |
-| **Defects** | 71 found, 67 fixed with regression coverage, 4 open (D-08 Docker, D-49 answer rows, device verification, ElevenLabs key balance) |
+| **Defects** | 75 found, 71 fixed with regression coverage, 4 open (D-08 Docker, D-49 answer rows, device verification, provider/ElevenLabs credentials) |
 
 ---
 
@@ -59,6 +59,17 @@ Engineering report for the **Solo** voice-first AI workspace.
 | 30 | Defects | [defect-log-0030.md](04-defects/defect-log-0030.md) |
 | 31 | Verification | [acceptance-criteria-0031.md](05-verification/acceptance-criteria-0031.md) |
 | 32 | Summary | [summary-0032.md](06-summary/summary-0032.md) |
+
+### Phase 2.13 — 2.6.1: OpenCode Go as a second Orchestrator provider
+
+| # | Stage | Document |
+|---|---|---|
+| 87 | Planning | [orchestrator-providers-0087.md](01-planning/orchestrator-providers-0087.md) |
+| 88 | Implementation | [orchestrator-providers-0088.md](02-implementation/orchestrator-providers-0088.md) |
+| 89 | Testing | [orchestrator-providers-0089.md](03-testing/orchestrator-providers-0089.md) |
+| 90 | Defects | [defect-log-0090.md](04-defects/defect-log-0090.md) |
+| 91 | Verification | [acceptance-criteria-0091.md](05-verification/acceptance-criteria-0091.md) |
+| 92 | Summary | [summary-0092.md](06-summary/summary-0092.md) |
 
 ### Phase 2.12 — 2.6.0: unified conversation, realtime voice, mobile
 
@@ -195,6 +206,7 @@ project-report/
 | 1.5 | 2026-10-10 | Renamed to **Solo**; Create/Open/Import project model; `.solo` state store with state tree, memory, sessions, per-project config; native one-command install; public-readiness audit | 286 (194 BE · 39 FE · 53 e2e) | D-09…D-12 |
 | 2 | 2026-10-10 | **Pi Agent over RPC** (real file changes verified end to end), Pyright verification, OpenRouter Orchestrator (intent, planning, summaries), prioritised dependency-aware queue, full Settings-UI configuration for both models, tabbed settings + Plan panel | 382 (288 BE · 68 FE · 26 live e2e) + 53 simulator e2e | D-13…D-16 |
 | 2.2 | 2026-10-10 | **Solo's own isolated Pi Agent** (never the host's, never `PATH`), **in-place updates** with fingerprint-driven rebuilds, backups and rollback, versioning and a migration runner, Writing panel + file upload, animated voice preview | 513 (339 BE · 82 FE · 39 live e2e) + 53 simulator e2e | D-17…D-23 |
+| 2.13 | 2026-10-13 | **2.6.1.** Added **OpenCode Go** as a second Orchestrator provider without touching OpenRouter. The Orchestrator had been wired to OpenRouter *by name* — key and model read directly in five places. A provider is now a **descriptor** (`orchestrator_providers.py`): base URL, key/model settings, extra headers, account endpoint. One transport serves both; it gained only `extra_headers`, carrying 2.5.1's structured-output fallback along for free. **The docs' "should" is a "must"**: `x-opencode-session` is mandatory and omitting it is a 400 on every call — found by live testing, not reading. Three defects the second provider exposed: `verify_key` is OpenRouter-only (`GET /key`), the model was always written to `openrouter_model`, and status masked OpenRouter's key for every provider. New `OpenCode Go Docs/` (5 files) records the verified protocol, errors and 39-model catalogue. **Not verified:** a real completion — no Go key was available. | 482 BE · 152 FE | D-72…D-75 |
 | 2.12 | 2026-10-13 | **2.6.0.** Merged `Conversation`, `Voice` and `Write` into **one surface**: typed messages and spoken narration interleaved chronologically, with voice, attachments and speech output in the composer. `VoiceChannel` deleted; the `voice` tile/tab removed and the Dockview key bumped `v3→v4`. Voice is now **real-time** (`useRealtimeVoice`: AudioWorklet → 16 kHz PCM → ElevenLabs Realtime with a **single-use token**, so the API key stays server-side); only `committed_transcript` dispatches, partials are shown but never acted on, and batch remains the fallback. **The documentation would have broken it silently** — the API reference says `inputAudioChunk`, the live protocol uses `message_type`; sending `type` yields `input_error` and a session that connects and transcribes nothing. Caught by testing the live service, now pinned by a test. Microphone input now survives Orchestrator/Pi failures and a failed turn is not lost. Mobile was the desktop layout shrunk (1 media query, 0 phone breakpoints, sub-44px targets): now 44px targets, safe areas, sticky composer, bottom nav. **Not verified by ear** — balance is 0. | 470 BE · 152 FE | D-66…D-71 |
 | 2.11 | 2026-10-13 | **2.5.5.** Made the voice exchange conversational. The agent only spoke on milestones, so a session opened in **silence**, a request produced **no spoken acknowledgement**, and file changes were **inaudible** — one-sided, because `_narrate` forwarded only `progress.summary` and `error`. `assistant.message` and `file.changed` are now narrated, the acknowledgement is rewritten for speech (`"Got it. I'll get started on this: create a login page."`) at IMPORTANT priority so it is never superseded or dropped mid-utterance, and file changes are phrased by verb (created/updated/removed) and coalesce under load. A session now opens with a contextual greeting through **`POST /api/voice/say`** — the same narration pipeline, not a second mechanism. Steering and per-project context already existed and needed no change. **Not verified by ear:** the ElevenLabs balance is exhausted again (10000/10000). | 468 BE · 150 FE | D-62…D-65 |
 | 2.10 | 2026-10-13 | **2.5.4.** Found the reason audio was generated and never heard. The mobile log showed **24 successful TTS calls and 0 requests for `/api/voice/audio`**. A narration line is published **twice under one id** (queued `spoken:false`, then delivered `spoken:true`) and the provider merged narration with `appendUnique`, which **discards an id it has already seen** — so the delivered message was thrown away, every line stayed unspoken, and the player (which only plays lines with audio) fetched nothing. The milestone channel in the same handler used an upsert with a comment describing exactly this case. Fixed with `upsertNarration`, proven on the wire and covered by a test that fails on the old code. Also: narration missed during a disconnect is now recovered, and a rate-limited Orchestrator is reported in the workspace tile with the provider's own message. **Not verified:** hearing it — needs a browser and a funded key. | 147 FE | D-59…D-61 |

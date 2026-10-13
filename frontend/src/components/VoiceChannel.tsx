@@ -51,6 +51,7 @@ export default function VoiceChannel() {
   const playback = useSpeechPlayback(lines)
   const { speaking: isSpeaking, stop: stopSpeaking, setEnabled: setPlaybackEnabled } = playback
   const playbackEnabled = playback.enabled
+  const playbackBlocked = playback.blocked
 
   /** One spoken turn: transcribe, then send it down the normal task path. */
   const handleUtterance = useCallback(
@@ -158,6 +159,13 @@ export default function VoiceChannel() {
           >
             {playbackEnabled ? '🔊 Voice on' : '🔇 Voice off'}
           </button>
+        )}
+        {/* The audio exists but the browser refused to play it until the user
+            interacts. Saying so turns a silent panel into a one-tap fix. */}
+        {playbackBlocked && playbackEnabled && (
+          <span className="pill pill--warning" role="status">
+            tap anywhere to enable sound
+          </span>
         )}
         {!active && connection !== 'open' && <span className="pill pill--neutral">offline</span>}
       </div>

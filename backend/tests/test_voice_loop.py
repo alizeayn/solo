@@ -309,10 +309,21 @@ def test_a_spoken_task_runs_and_the_progress_is_spoken_back(client, elevenlabs):
     # Milestones are spoken; tool calls are not. Every line must be a milestone
     # or an outcome, never low-level activity.
     assert all(line["text"] for line in lines)
+    # `reply` carries the agent's acknowledgement and `file` a file change. Both
+    # are conversational, not low-level: a spoken conversation needs the agent to
+    # confirm what it understood, and the user asked which files changed.
     assert all(
-        line["kind"] in {"progress", "outcome", "summary", "milestone", "error"}
+        line["kind"]
+        in {"progress", "outcome", "summary", "milestone", "error", "reply", "file"}
         for line in lines
     ), [line["kind"] for line in lines]
+
+    kinds = {line["kind"] for line in lines}
+    assert "reply" in kinds, "the agent never acknowledged the request aloud"
+    acknowledgement = next(line for line in lines if line["kind"] == "reply")
+    # It confirms what was understood by echoing the request itself.
+    assert "calculator" in acknowledgement["text"].lower()
+    assert acknowledgement["priority"] <= 1, "an acknowledgement must outrank progress" 
 
     # --- ElevenLabs actually synthesised it -------------------------------- #
     assert elevenlabs.synthesised, "the transport never called text-to-speech"
@@ -389,3 +400,44 @@ def test_without_a_key_the_loop_still_shows_every_line(client, elevenlabs, monke
     assert state["audio_available"] is False
     assert state["transport"] == "recording"
     assert state["phase"] == "narration-only"
+
+async def test_narration_speaks_acknowledgements_and_file_changes():
+    """The two lines a spoken conversation cannot do without.
+
+    Milestones alone made the exchange one-sided: the user asked for something and
+    was answered only in text, and file work was invisible until the next phase.
+    """
+    from app.services.orchestrator import _file_sentence
+
+    assert _file_sentence("added", "login.html") == "I've created login.html."
+    assert _file_sentence("modified", "styles.css") == "I've updated styles.css."
+    assert _file_sentence("deleted", "old.css") == "I've removed old.css."
+    # An unknown verb must still produce something sayable rather than a blank.
+    assert _file_sentence(None, "app.py") == "I've updated app.py."
+
+
+async def test_the_greeting_endpoint_speaks_through_the_normal_pipeline(client):
+    """A greeting is a narration line, not a second mechanism.
+
+    Routing it through /api/voice/say means one synthesis path, one WebSocket
+    stream and one player, so the greeting cannot drift from milestone speech.
+    """
+    _sign_in(client)
+    response = client.post(
+        "/api/voice/say", json={"text": "Hello. What would you like me to work on?", "kind": "greeting"}
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["queued"] is True, payload
+    assert payload["state"]["enabled"] is True
+    assert payload["id"]
+
+    # It lands in the transcript like any other line.
+    history = client.get("/api/voice/history").json()
+    assert any("What would you like" in line["text"] for line in history)
+
+
+async def test_an_empty_greeting_is_rejected(client):
+    _sign_in(client)
+    response = client.post("/api/voice/say", json={"text": ""})
+    assert response.status_code == 422

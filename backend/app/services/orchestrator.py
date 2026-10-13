@@ -56,6 +56,24 @@ class TaskConflictError(RuntimeError):
     """Raised when a second modifying task is requested for a busy project."""
 
 
+#: Spoken form of a file change, keyed by the verb the adapter reports.
+_FILE_VERBS: dict[str, str] = {
+    "added": "created",
+    "created": "created",
+    "write": "created",
+    "modified": "updated",
+    "changed": "updated",
+    "edit": "updated",
+    "deleted": "removed",
+}
+
+
+def _file_sentence(change_type: str | None, path: str) -> str:
+    """Phrase one file change for speech: "I've created app.py"."""
+    verb = _FILE_VERBS.get(str(change_type or "").lower(), "updated")
+    return f"I've {verb} {path}."
+
+
 def _milestone_field(milestone: Any, name: str, default: Any = None) -> Any:
     """Read one field from a milestone that may be a dataclass or a dict.
 
@@ -616,7 +634,11 @@ class OrchestratorService:
                 f"{len(planned) - 1} further step(s) are queued and will run in order."
             )
         else:
-            reply = f"Started a coding task: {instruction.strip()[:160]}"
+            # Spoken aloud, so it acknowledges the request and confirms what was
+            # understood before work begins. The previous "Started a coding task:"
+            # was written for a log, not for a conversation.
+            said = instruction.strip()[:160].rstrip(".")
+            reply = f"Got it. I'll get started on this: {said}."
         return reply, task.id
 
     async def _active_task_for(self, project_id: str) -> Task | None:
@@ -959,6 +981,34 @@ class OrchestratorService:
                 task_id=task_id,
                 project_id=project_id,
             )
+        elif event_type == EventType.ASSISTANT_MESSAGE.value:
+            # The agent's reply is the acknowledgement a spoken conversation
+            # depends on: "got it, I'll take care of that". Narrating milestones
+            # but not replies made the exchange one-sided -- the user spoke and
+            # was answered only in text.
+            #
+            # IMPORTANT outranks PROGRESS, so an acknowledgement is never
+            # superseded by a progress line the moment work starts.
+            await self._narration.announce(
+                message,
+                kind="reply",
+                priority=int(Priority.IMPORTANT),
+                task_id=task_id,
+                project_id=project_id,
+            )
+        elif event_type == EventType.FILE_CHANGED.value:
+            change = (data or {}).get("change_type")
+            path = str((data or {}).get("path") or "").strip()
+            if path:
+                # Consecutive file changes coalesce in the narration queue, so a
+                # burst reports the latest file rather than replaying every write.
+                await self._narration.announce(
+                    _file_sentence(str(change) if change else None, path),
+                    kind="file",
+                    priority=int(Priority.PROGRESS),
+                    task_id=task_id,
+                    project_id=project_id,
+                )
         elif event_type == EventType.ERROR.value:
             await self._narration.announce(
                 message,

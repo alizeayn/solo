@@ -33,13 +33,12 @@ import InspectorPanel from '../panels/InspectorPanel'
 import PanelErrorBoundary from './PanelErrorBoundary'
 import MilestonePanel from '../panels/MilestonePanel'
 import WritePanel from '../panels/WritePanel'
-import VoiceChannel from './VoiceChannel'
 
 /**
  * Bump when the set of panels changes. `v1` held only Conversation, Activity and
  * Inspector; restoring it would silently omit every later tile.
  */
-const LAYOUT_STORAGE_KEY = 'solo.layout.v3'
+const LAYOUT_STORAGE_KEY = 'solo.layout.v4'
 
 /**
  * Wrap every tile in an error boundary.
@@ -69,7 +68,6 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   conversation: bounded('Conversation', ConversationPanel),
   activity: bounded('Pi Agent Activity', ActivityPanel),
   milestones: bounded('Orchestrator Milestones', MilestonePanel),
-  voice: bounded('Voice', VoiceChannel),
   write: bounded('Write', WritePanel),
   inspector: bounded('Inspector', InspectorPanel),
 }
@@ -101,12 +99,6 @@ const PANEL_SPECS: PanelSpec[] = [
     component: 'milestones',
     title: 'Orchestrator Milestones',
     position: { referencePanel: 'activity', direction: 'below' },
-  },
-  {
-    id: 'voice',
-    component: 'voice',
-    title: 'Voice',
-    position: { referencePanel: 'milestones', direction: 'below' },
   },
   {
     id: 'write',
@@ -148,7 +140,7 @@ function clearLayout() {
     /* ignore */
   }
   // Drop earlier versions too, so they cannot be picked up again.
-  for (const stale of ['solo.layout.v1', 'solo.layout.v2']) {
+  for (const stale of ['solo.layout.v1', 'solo.layout.v2', 'solo.layout.v3']) {
     try {
       window.localStorage.removeItem(stale)
     } catch {
